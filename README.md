@@ -36,42 +36,43 @@
 
 ## 快速入门（首次源码编译可能较久）
 
-### 第一步：下载并安装
+### 第一步：一键下载并安装
 
-SSH 登录你的 **Ubuntu / Debian 云服务器**：
-
-```bash
-curl -fsSLo /tmp/dujiao-fork-deploy.sh \
-  https://raw.githubusercontent.com/slobys/dujiao-next/main/scripts/fork-deploy.sh
-
-# 建议先查看脚本内容，再执行：
-less /tmp/dujiao-fork-deploy.sh
-sudo bash /tmp/dujiao-fork-deploy.sh install
-```
-
-安装器按提示创建容器和数据目录，生成管理员账户的随机初始密码及后台地址。**密码仅首次显示，录制教程时务必打码。**
-
-首次安装可选“公网 IP + 端口（临时调试）”或“仅本机（推荐已有反向代理时）”。明文 HTTP **不适合输入真实后台密码**；正式使用要绑定 HTTPS。
-
-### 第二步：访问商城
+SSH 登录 **Ubuntu / Debian 云服务器**，复制下面**这一整行命令**执行：
 
 ```bash
-sudo dujiao-fork status    # 服务是否运行
-sudo dujiao-fork access    # 商城和后台完整地址
+curl -fsSLo /tmp/dujiao-fork-deploy.sh https://raw.githubusercontent.com/slobys/dujiao-next/main/scripts/fork-deploy.sh && sudo bash /tmp/dujiao-fork-deploy.sh install
 ```
 
-商城默认容器内端口为 `8080`；如选择公网访问，宿主机默认使用 `18080`。公网无法访问时，检查 **云厂商安全组 / 主机防火墙 / 端口映射**，而不是只检查服务器本机。
+脚本会自动检查系统、补齐所需依赖、部署商城并生成后台地址及初始管理员密码。下载失败时不会执行安装；建议先确认脚本来自本仓库。
 
-### 第三步：配置域名或公网 IPv4 的 HTTPS
+首次安装按提示选择访问方式：**公网 IP + 端口**（仅供临时测试）或**仅本机**（适合已有反向代理）。**初始密码只显示一次，录视频请打码；正式登录后台前应配置 HTTPS。**
 
-先在云厂商安全组与系统防火墙开放 **TCP 80、443**，再选择需要的 HTTPS 证书类型：
+### 第二步：打开管理菜单，查看商城地址
+
+安装完成后执行：
 
 ```bash
 sudo dujiao-fork
-# 选择 9 → 1) 域名证书  或  2) 公网 IPv4 证书
 ```
 
-域名需要提前配置 DNS A 记录；公网 IPv4 不需要域名，但 TCP 80/443 必须从公网直达本机。公网 IP 使用 Let's Encrypt `shortlived` 证书（**160 小时**），**Caddy 自动续期**，通过 `sudo dujiao-fork https-status` 检查有效期。已有 Nginx / NPM 占用 80/443 时不能直接使用内置 Caddy，应自行处理现有代理证书。详见 [通用 VPS 部署指南](docs/DEPLOYMENT.md)。
+进入**中文管理菜单**后，输入 **`2` 查看服务状态**，输入 **`11` 显示商城和后台的完整访问地址**。如果选择了“仅本机”模式，外部浏览器暂时无法直接访问，请接着完成第三步。
+
+默认临时访问端口为 `18080`；公网地址打不开时，检查**云厂商安全组、系统防火墙和端口映射**，不要把 `0.0.0.0` 当作浏览器地址。
+
+### 第三步：通过菜单申请 HTTPS 证书
+
+如果仍在第二步的菜单中，直接选择 `9`；如果已退出，执行以下命令重新进入：
+
+```bash
+sudo dujiao-fork
+```
+
+输入 **`9` 申请 HTTPS 证书**，然后选择 **`1` 域名证书**或 **`2` 公网 IPv4 证书**。域名方式需提前设置 DNS A 记录；IP 方式无需域名，但必须是真实公网 IPv4。
+
+两种方式都需要**公网 TCP 80/443 可达**，证书由 Caddy 自动续期。IP 证书采用 Let's Encrypt `shortlived` 模式，有效期 **160 小时**，由 Caddy 自动管理续期。申请完成后，返回菜单选择 **`10` 检查 HTTPS 状态**，或选择 **`11` 获取新的 HTTPS 商城地址**。
+
+如果已有 Nginx / Nginx Proxy Manager 占用 80/443，安装器不会抢占端口，请使用现有反向代理配置 HTTPS。详见 [通用 VPS 部署指南](docs/DEPLOYMENT.md)。
 
 ## 让 AI 管理商城（可随时关闭）
 
