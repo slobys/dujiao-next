@@ -78,6 +78,7 @@ sudo env DUJIAO_PUBLIC_IP=你的真实公网IPv4 dujiao-fork access
 ```
 
 已安装的商城无需重新部署，就能再次打印完整访问链接：`sudo dujiao-fork access`，或进入管理菜单选择 **11）显示访问链接**。**不会再次显示初始化密码。**
+
 ### 3. 一键配置域名 + HTTPS（Caddy 自动申请和续期）
 
 先在域名 DNS 中添加 **A 记录**，例如将 `shop.example.com` 指向 Vultr **公网 IPv4**，在 Vultr 云防火墙和系统防火墙开放 **TCP 80/443**。检查错误的 AAAA/IPv6 记录。使用 Cloudflare 时，首次申请证书建议先用**仅 DNS（灰云）**；启用代理后选 **Full (strict)**，不要使用 Flexible。
