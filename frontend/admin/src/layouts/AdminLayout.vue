@@ -532,6 +532,12 @@ const navGroups = computed<NavGroup[]>(() => {
           permission: 'GET:/admin/ai-access/actions',
         },
         {
+          label: t('admin.navItems.aiOrderReviews'),
+          to: '/ai-order-reviews',
+          icon: ShieldCheck,
+          permission: 'GET:/admin/ai-access/order-reviews',
+        },
+        {
           label: t('admin.navItems.authzAudit'),
           to: '/authz-audit-logs',
           icon: ScrollText,

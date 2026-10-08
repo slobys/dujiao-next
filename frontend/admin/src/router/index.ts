@@ -328,6 +328,12 @@ const routes = [
         meta: { permission: 'GET:/admin/ai-access/actions' },
       },
       {
+        path: 'ai-order-reviews',
+        name: 'ai-order-reviews',
+        component: () => import('@/views/admin/AiOrderReviews.vue'),
+        meta: { permission: 'GET:/admin/ai-access/order-reviews' },
+      },
+      {
         path: 'ai-authorize',
         name: 'ai-authorize',
         component: () => import('@/views/admin/AiAuthorize.vue'),

@@ -71,6 +71,11 @@ func (s *Store) RotateWithAudit(ctx context.Context, id uint, hash string, now t
 			Updates(map[string]interface{}{"status": domain.ActionRejected, "failure_code": "key_rotated", "updated_at": now}).Error; err != nil {
 			return err
 		}
+		// A rotated AI identity cannot leave older after-sales requests
+		// silently awaiting acceptance under its newly issued credential.
+		if err := tx.Model(&domain.OrderReview{}).
+			Where("key_id = ? AND status = ?",audit.KeyID,domain.OrderReviewPending).
+			Updates(map[string]any{"status":domain.OrderReviewRejected,"updated_at":now}).Error;err!=nil{return err}
 		if err := tx.Create(audit).Error; err != nil {
 			return err
 		}

@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/slobys/dujiao-next/actions/workflows/ci.yml/badge.svg)](https://github.com/slobys/dujiao-next/actions/workflows/ci.yml) [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE) [![Docker Compose](https://img.shields.io/badge/Deploy-Docker%20Compose-2496ED?logo=docker&logoColor=white)](scripts/fork-deploy.sh)
 
-> **本仓库是个人维护的 Fork，并非上游官方发行版。** 已提供一键部署、OpenClaw/n8n 集成与 **AI 接入中心 2.0**：在商城后台管理远程 MCP 和浏览器 OAuth+PKCE 授权；3.0 新增受限的自动创建下架商品草稿、申请上架/下架、审批中心及审计。原有本地 stdio MCP/AI Key 仍兼容。远程 MCP 不提供自动上架、退款或支付修改；上线前务必备份并在目标服务器实际联调。
+> **本仓库是个人维护的 Fork，并非上游官方发行版。** 已提供一键部署、OpenClaw/n8n 集成与 **AI 接入中心 2.0**：在商城后台管理远程 MCP 和浏览器 OAuth+PKCE 授权；3.0 已新增受限的商品草稿创建、商品上架审批、脱敏订单查询与售后人工审核工单。原有本地 stdio MCP/AI Key 仍兼容。远程 MCP 不提供自动上架、退款或支付修改；上线前务必备份并在目标服务器实际联调。
 
 **快速导航：** [一键部署](#-一键部署本-fork) · [管理与更新](#-日常管理) · [数据与备份](#-数据与备份) · [通用 MCP 接入](integrations/mcp/README.md) · [AI 接入](integrations/mcp/README.md) · [开发指南](#-本地开发) · [与上游的区别](#-与上游的区别)
 
@@ -22,6 +22,7 @@
 | **AI 接入管理** | **独立 AI Key、分配只读 scope、设置 1–90 天到期、即刻撤销和轮换、访问审计（后台系统设置）** |
 | **AI 接入中心 2.0** | **内置远程 HTTP MCP（默认关闭）、OAuth PKCE 浏览器授权、复制配置式远程连接、1 小时访问令牌与旋转刷新令牌** |
 | **AI 接入中心 3.0（第一批）** | **AI 自动创建未上架、零库存商品草稿；提交上架/下架申请；后台逐条批准/拒绝；数据库并发保护、审计与撤销** |
+| **AI 订单售后（第二批）** | **AI 查询脱敏订单状态、金额和时间；提交售后人工跟进工单；后台接收/拒绝/完成；无退款、取消或发货权限** |
 
 ## 🚀 一键部署（本 Fork）
 
@@ -226,7 +227,11 @@ sudo env DUJIAO_FORK_DIR=/opt/my-dujiao \
 
 新增 **`catalog:draft:write`**（允许 AI 自动创建真实但强制下架的零库存人工交付商品草稿）和 **`catalog:publish:request`**（只允许发起上架/下架申请，**每次必须由你在“AI 操作审批”页面批准**）。两项权限默认都不勾选，既有客户端不会自动获得。后台审批会核对商品价格、状态与更新时间并执行一次性条件更新，防止并发修改和审批重放。
 
-**这是分阶段落地的第一批业务写入能力，不代表 AI 已能完全控制所有商城功能。** 订单发货、实际退款、批量改价、支付密钥和生产代码部署尚未开放。具体示例、权限与更新方式见 [AI 接入中心 3.0 说明](integrations/mcp/README.md)。
+**这是分阶段落地的首批业务写入能力，不代表 AI 已能完全控制所有商城功能。** 第二批已有订单脱敏查询与人工售后工单，但订单发货、实际退款、批量改价、支付密钥和生产代码部署仍未开放。具体示例、权限与更新方式见 [AI 接入中心 3.0 说明](integrations/mcp/README.md)。
+
+### AI 接入中心 3.0 第二批：订单与售后
+
+新增 `orders:read` 权限用于查询不包含客户隐私、卡密和付款凭证的订单摘要；`orders:review:request` 用于让 AI 提交交付延迟、支付异常、退款建议、取消建议等固定类别的售后工单。**后台新菜单“AI 订单售后审核”用于接收、拒绝与标记人工跟进完成。** 接收工单不会调用任何退款、订单取消或发货接口，真正的售后操作仍须管理员在原订单管理页面手动完成。两个新增权限默认不授权，原有客户端权限不变。详见 [完整说明](integrations/mcp/README.md)。
 
 ### 兼容：NAS/Windows 本地 MCP + 静态 AI Key
 

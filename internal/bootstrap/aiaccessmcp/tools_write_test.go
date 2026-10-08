@@ -5,18 +5,24 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	catalogproductbootstrap "github.com/dujiao-next/internal/bootstrap/catalogproduct"
+	aidomain "github.com/dujiao-next/internal/modules/aiaccess/domain"
 	categorydomain "github.com/dujiao-next/internal/modules/catalog/category/domain"
 	categorygormstore "github.com/dujiao-next/internal/modules/catalog/category/infrastructure/gormstore"
 	productdomain "github.com/dujiao-next/internal/modules/catalog/product/domain"
 	productgormstore "github.com/dujiao-next/internal/modules/catalog/product/store/gormstore"
+	ordercontract "github.com/dujiao-next/internal/modules/order/contract"
+	orderdomain "github.com/dujiao-next/internal/modules/order/domain"
 	"github.com/dujiao-next/internal/shared/jsonmap"
+	"github.com/dujiao-next/internal/shared/money"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
 
@@ -144,5 +150,138 @@ func TestMCPDraftCreationAndPublishRequestNeedSeparateConsent(t *testing.T) {
 	state, _ := status.StructuredContent.(map[string]any)
 	if state["status"] != "pending" {
 		t.Fatalf("request not pending: %+v", state)
+	}
+}
+
+// Mocked order store implements ONLY the two read methods exercised by MCP;
+// the full domain Store remains embedded but none of its write methods can run.
+type aiOrderStoreStub struct {
+	ordercontract.Store
+	order orderdomain.Order
+}
+
+func (s *aiOrderStoreStub) GetByID(id uint) (*orderdomain.Order, error) {
+	if id != s.order.ID {
+		return nil, nil
+	}
+	item := s.order
+	return &item, nil
+}
+func (s *aiOrderStoreStub) ListAdmin(filter ordercontract.ListFilter) ([]orderdomain.Order, int64, error) {
+	if filter.Status != "" && filter.Status != s.order.Status {
+		return []orderdomain.Order{}, 0, nil
+	}
+	return []orderdomain.Order{s.order}, 1, nil
+}
+func TestMCPOrderSummaryRedactionAndTriage(t *testing.T) {
+	services, _, remote := fixture(t)
+	now := time.Now().UTC()
+	store := &aiOrderStoreStub{order: orderdomain.Order{
+		ID: 1001, OrderNo: "DJ-TEST-PRIVATE-0001", Status: "paid",
+		Currency: "CNY", TotalAmount: money.FromDecimal(decimal.RequireFromString("98.50")),
+		GuestEmail: "customer.secret@example.org", ClientIP: "203.0.113.77",
+		GuestPassword: "DO-NOT-LEAK-PASSWORD",
+		Items:         []orderdomain.OrderItem{{OrderID: 1001, TitleJSON: jsonmap.JSON{"zh-CN": "DELIVERY_SECRET_IN_ITEM"}}},
+		CreatedAt:     now.Add(-time.Hour), UpdatedAt: now, PaidAt: &now,
+	}}
+	services.OrderStore = store
+	if _, err := remote.SetConfig(context.Background(), true, "https://shop.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	access := issueOAuthToken(t, remote, "orders:read orders:review:request")
+	router := gin.New()
+	gin.SetMode(gin.TestMode)
+	router.Any("/mcp", New(services).Serve)
+	server := httptest.NewServer(router)
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	client := mcp.NewClient(&mcp.Implementation{Name: "order-test", Version: "1"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{
+		Endpoint:             server.URL + "/mcp",
+		HTTPClient:           &http.Client{Transport: rewritingTransport{Base: http.DefaultTransport, Token: access}},
+		DisableStandaloneSSE: true, MaxRetries: -1,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	listed, err := session.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]bool{}
+	for _, tool := range listed.Tools {
+		names[tool.Name] = true
+	}
+	for _, name := range []string{"list_order_summaries", "get_order_summary", "request_order_after_sales_review", "get_order_after_sales_review_status"} {
+		if !names[name] {
+			t.Fatalf("missing consented order tool %s", name)
+		}
+	}
+	if names["create_product_draft"] || names["request_product_status_change"] || names["list_products"] {
+		t.Fatalf("order scopes allowed product writes/reads: %v", names)
+	}
+	summaries, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "list_order_summaries", Arguments: map[string]any{"status": "paid", "page": 1, "page_size": 5}})
+	if err != nil || summaries.IsError {
+		t.Fatalf("list failed: %+v %v", summaries, err)
+	}
+	single, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "get_order_summary", Arguments: map[string]any{"order_id": 1001}})
+	if err != nil || single.IsError {
+		t.Fatalf("single failed: %+v %v", single, err)
+	}
+	for _, data := range []any{summaries.StructuredContent, single.StructuredContent} {
+		value := fmt.Sprint(data)
+		for _, secret := range []string{"customer.secret@example.org", "203.0.113.77", "DO-NOT-LEAK-PASSWORD", "DELIVERY_SECRET_IN_ITEM"} {
+			if strings.Contains(value, secret) {
+				t.Fatalf("sensitive order data escaped to AI: %s", secret)
+			}
+		}
+		if !strings.Contains(value, "98.50") || !strings.Contains(value, "paid") {
+			t.Fatalf("missing safe facts: %s", value)
+		}
+	}
+	invalid, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "request_order_after_sales_review", Arguments: map[string]any{"order_id": 1001, "reason": "refund_execute_now"},
+	})
+	if err == nil && !invalid.IsError {
+		t.Fatal("AI requested direct refund action")
+	}
+	triage, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "request_order_after_sales_review", Arguments: map[string]any{"order_id": 1001, "reason": "refund_review"},
+	})
+	if err != nil || triage.IsError {
+		t.Fatalf("triage submit failed: %+v %v", triage, err)
+	}
+	data, ok := triage.StructuredContent.(map[string]any)
+	if !ok || data["status"] != "pending" || data["refund_processed"] != false || data["order_modified"] != false {
+		t.Fatalf("triage unexpectedly performed financial action: %+v", triage)
+	}
+	reqID, ok := data["request_id"].(string)
+	if !ok {
+		t.Fatal("no request id")
+	}
+	observed, err := services.AiOrderReviewService.GetForAdmin(ctx, reqID)
+	if err != nil || observed.ExpectedTotal != "98.50" || observed.ExpectedStatus != "paid" {
+		t.Fatalf("unpersisted request %+v %v", observed, err)
+	}
+	if store.order.Status != "paid" {
+		t.Fatal("triage changed real merchant order")
+	}
+	if state, err := services.AiOrderReviewService.Process(ctx, reqID, 7, "accept"); err != nil || state != aidomain.OrderReviewAccepted {
+		t.Fatalf("human acceptance %s %v", state, err)
+	}
+	report, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "get_order_after_sales_review_status", Arguments: map[string]any{"request_id": reqID},
+	})
+	if err != nil || report.IsError {
+		t.Fatalf("status query failed: %+v %v", report, err)
+	}
+	status, _ := report.StructuredContent.(map[string]any)
+	if status["status"] != "accepted" {
+		t.Fatalf("not accepted: %+v", status)
+	}
+	if store.order.Status != "paid" {
+		t.Fatal("human triage acceptance changed paid order")
 	}
 }

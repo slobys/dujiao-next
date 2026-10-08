@@ -90,6 +90,7 @@ func AutoMigrate() error {
 		&aiaccessdomain.AuthorizationRequest{},
 		&aiaccessdomain.OAuthRefresh{},
 		&aiaccessdomain.ActionRequest{},
+		&aiaccessdomain.OrderReview{},
 		&siteconnectiondomain.Connection{},
 		&mappingdomain.Mapping{},
 		&mappingdomain.SKUMapping{},
