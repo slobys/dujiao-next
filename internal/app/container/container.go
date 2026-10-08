@@ -92,6 +92,7 @@ type Container struct {
 	// Repositories
 	AdminStore             admincontract.Store
 	AiAccessRepo           aiaccesscontract.Repository
+	AiRemoteRepo           aiaccesscontract.RemoteRepository
 	UserStore              usercontract.Store
 	ExternalIdentityStore  externalidentitycontract.Store
 	EmailVerificationStore emailverificationcontract.Store
@@ -135,6 +136,7 @@ type Container struct {
 	// Services
 	AuthzService                  *authz.Service
 	AiAccessService               *aiaccessapp.Service
+	AiRemoteService               *aiaccessapp.RemoteService
 	AuthService                   *adminauthapp.Service
 	TOTPService                   *admintotpapp.Service
 	UserTOTPService               *usertotpapp.Service

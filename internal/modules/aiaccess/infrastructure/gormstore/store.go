@@ -58,6 +58,11 @@ func (s *Store) RotateWithAudit(ctx context.Context, id uint, hash string, now t
 		if result.RowsAffected != 1 {
 			return nil
 		}
+		// Manual rotation of an OAuth key must also invalidate any issued
+		// refresh token, otherwise old remote sessions could mint a fresh key.
+		if err := tx.Where("key_id = ?", audit.KeyID).Delete(&domain.OAuthRefresh{}).Error; err != nil {
+			return err
+		}
 		if err := tx.Create(audit).Error; err != nil {
 			return err
 		}

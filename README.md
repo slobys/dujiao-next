@@ -4,9 +4,9 @@
 
 [![CI](https://github.com/slobys/dujiao-next/actions/workflows/ci.yml/badge.svg)](https://github.com/slobys/dujiao-next/actions/workflows/ci.yml) [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE) [![Docker Compose](https://img.shields.io/badge/Deploy-Docker%20Compose-2496ED?logo=docker&logoColor=white)](scripts/fork-deploy.sh)
 
-> **本仓库是个人维护的 Fork，并非上游官方发行版。** 已提供菜单式部署工具、OpenClaw/n8n 集成和通用 MCP。现可在商城后台创建、轮换、撤销具有到期时间及细粒度只读 scope 的专用 AI Key，供 OpenClaw、Codex、Claude Code 共用同一套商城读取接口。MCP 不提供自主上架、退款或自动发布网站代码；上线前应备份数据库并在真实商城完成授权和联调。
+> **本仓库是个人维护的 Fork，并非上游官方发行版。** 已提供一键部署、OpenClaw/n8n 集成与 **AI 接入中心 2.0**：在商城后台默认关闭的远程 MCP 开关、HTTPS 地址、可复制 Codex/Claude Code/OpenClaw 配置、浏览器 OAuth+PKCE 授权、只读范围和可撤销凭证。原有本地 stdio MCP/AI Key 仍兼容。远程 MCP 不提供自动上架、退款或支付修改；上线前务必备份并在目标服务器实际联调。
 
-**快速导航：** [一键部署](#-一键部署本-fork) · [管理与更新](#-日常管理) · [数据与备份](#-数据与备份) · [通用 MCP 接入](integrations/mcp/README.md) · [AI 接入](#-ai-接入openclaw--n8n-第一阶段) · [开发指南](#-本地开发) · [与上游的区别](#-与上游的区别)
+**快速导航：** [一键部署](#-一键部署本-fork) · [管理与更新](#-日常管理) · [数据与备份](#-数据与备份) · [通用 MCP 接入](integrations/mcp/README.md) · [AI 接入](integrations/mcp/README.md) · [开发指南](#-本地开发) · [与上游的区别](#-与上游的区别)
 
 ## ✨ 主要功能
 
@@ -20,6 +20,7 @@
 | **AI 初版** | **OpenClaw 商品/库存只读查询、下架草稿创建、经营报表与 n8n 定时 Telegram 推送模板** |
 | **通用 MCP 初版** | **Codex、Claude Code、OpenClaw 共享安全只读商品/库存/营业报表工具及离线商品草稿预览** |
 | **AI 接入管理** | **独立 AI Key、分配只读 scope、设置 1–90 天到期、即刻撤销和轮换、访问审计（后台系统设置）** |
+| **AI 接入中心 2.0** | **内置远程 HTTP MCP（默认关闭）、OAuth PKCE 浏览器授权、复制配置式远程连接、1 小时访问令牌与旋转刷新令牌** |
 
 ## 🚀 一键部署（本 Fork）
 
@@ -212,13 +213,17 @@ sudo env DUJIAO_FORK_DIR=/opt/my-dujiao \
 
 后续管理命令若使用自定义目录，也需传入同样的 `DUJIAO_FORK_DIR`。不要手工将已有数据文件夹直接覆盖到新安装目录；旧站迁移应单独执行。
 
-## 🤖 AI 接入（OpenClaw / n8n 第一阶段）
+## 🤖 AI 接入（远程 MCP / 浏览器授权 / 旧版兼容）
 
-### 推荐：通用 MCP（Codex / Claude Code / OpenClaw）
+### 推荐：AI 接入中心 2.0
 
-已经新增 [**统一 MCP 接入指南（NAS、Windows、Codex、Claude Code、OpenClaw）**](integrations/mcp/README.md) 和 [MCP 服务程序](integrations/mcp/server.py)。此方案使用官方 MCP Python SDK，所有 AI 工具共享同一套只读 API：商品、分类、库存预警、营业日报与**离线草稿预览**。MCP 工具不会新建、发布或修改线上商品，也不会返回卡密和客户私密数据。安装 Python 虚拟环境并设置受限后台凭据即可接入；不需要重建商城 Docker 镜像。
+**无需在 NAS/Windows 安装本地 Python MCP 或配置 SSH：** 商城服务器原生暴露一个可选的 `https://你的域名/mcp` MCP 端点（**默认关闭**），打开后台**系统设置 → AI 接入管理 → 远程 MCP**，保存可信 HTTPS 根域名并启用，直接复制 OpenClaw、Codex 或 Claude Code 配置命令，之后浏览器完成管理员身份验证和手动授权即可。MCP 使用标准 OAuth PKCE 与受限只读 scope，客户端获得的是专属于该 MCP 资源的短期访问令牌，不是管理员 JWT。
 
-**现在可用专用 AI Key 接入：** 先备份 Vultr 商城，再运行 `sudo dujiao-fork update` 更新含后端/前端的镜像；打开后台**系统设置 → AI 接入管理**，分别为 OpenClaw、Codex、Claude Code 创建只读 Key，保存到 NAS 私有 `~/.config/dujiao-next-mcp.env` 的 `DUJIAO_AI_TOKEN` 中。密钥仅创建/轮换时显示一次，可单独撤销、轮换；原有管理员 JWT 路径仍暂保留兼容但不推荐长期使用。跨主机需 HTTPS，MCP stdio 本身不对公网开放。详见 [统一 MCP 安装说明](integrations/mcp/README.md)。
+生产升级请先 `sudo dujiao-fork backup`，确认备份完整，再运行 `sudo dujiao-fork update` 构建新 Go/Vue 镜像。必须通过受信任 HTTPS 域名访问，并限制旧的公网明文 `18080` 端口。端点默认关闭时返回 404；开启后在客户端完成 OAuth 授权方可使用。完整操作参见 **[AI 接入中心 2.0 使用说明](integrations/mcp/README.md)**。
+
+### 兼容：NAS/Windows 本地 MCP + 静态 AI Key
+
+原有 [Python stdio MCP](integrations/mcp/server.py) 和可撤销的只读 AI Key 仍保留，适合特殊本地环境；它们**不再是首选**，需要时按 [MCP 指南](integrations/mcp/README.md) 的旧方案部分配置。
 
 ### 旧版：OpenClaw Skill / n8n 独立脚本
 
@@ -310,7 +315,7 @@ cd ../admin && pnpm run test && pnpm run build
 
 ## 🧩 后续规划（尚未实现）
 
-- 为 AI 建立专用且可撤销的长期服务凭证、细粒度权限与审计。
+- 支持无法自动回退动态客户端注册（DCR）的 MCP 客户端使用 Client ID Metadata Documents（CIMD），以及更丰富的审批流程。
 - n8n 连接真实经营环境后的完整链路验证、异常重试与通知监控。
 - Codex 修改商城主题并在测试环境预览、审核后发布。
 

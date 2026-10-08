@@ -15,6 +15,7 @@ import (
 	adminauthzwiring "github.com/dujiao-next/internal/bootstrap/adminauthz"
 	adminuserwiring "github.com/dujiao-next/internal/bootstrap/adminuser"
 	affiliatebootstrap "github.com/dujiao-next/internal/bootstrap/affiliate"
+	aiaccessmcp "github.com/dujiao-next/internal/bootstrap/aiaccessmcp"
 	aiaccessroutes "github.com/dujiao-next/internal/bootstrap/aiaccessroutes"
 	catalogproductbootstrap "github.com/dujiao-next/internal/bootstrap/catalogproduct"
 	channelwiring "github.com/dujiao-next/internal/bootstrap/channelapi"
@@ -31,6 +32,7 @@ import (
 	"github.com/dujiao-next/internal/config"
 	"github.com/dujiao-next/internal/constants"
 	"github.com/dujiao-next/internal/logger"
+	aiaccesshttp "github.com/dujiao-next/internal/modules/aiaccess/transport/http"
 	apicredentialtransport "github.com/dujiao-next/internal/modules/apicredential/transport/http"
 	auditlogtransport "github.com/dujiao-next/internal/modules/auditlog/transport/http"
 	captchahttp "github.com/dujiao-next/internal/modules/captcha/transport/http"
@@ -267,6 +269,21 @@ func SetupRouter(cfg *config.Config, c *container.Container) *gin.Engine {
 	registerChannelRoutes(apiV1, c, channelHandler, channelMemberLevelHandler, channelGiftCardHandler, channelAffiliateHandler, channelTelegramBotHandler, channelWalletHandler, redisClient, channelAPIRule)
 	registerPaymentCallbackRoutes(apiV1, paymentCallbackHandler, paymentWebhookHandler, redisClient, callbackRule)
 	registerAdminRoutes(r, apiV1, cfg, c, adminLoginHandler, admin2FAHandler, adminUser2FAHandler, adminUserHandler, adminAuthzHandler, adminFulfillmentHandler, adminOrderHandler, adminOrderRefundHandler, adminContentHandler, adminDashboardHandler, adminMemberLevelHandler, adminApiCredentialHandler, adminAuditLogHandler, adminCardSecretHandler, adminCatalogCategoryHandler, adminCatalogProductHandler, adminCatalogProductMappingHandler, adminCouponHandler, adminGiftCardHandler, adminPromotionHandler, adminNotificationHandler, adminProcurementHandler, adminResellerManagementHandler, adminResellerProfileDetailHandler, adminResellerSiteConfigHandler, adminResellerProductSettingHandler, adminResellerOperationsHandler, adminResellerFinanceHandler, adminSettingsHandler, adminWalletHandler, adminPaymentHandler, adminPaymentChannelHandler, redisClient, adminLoginRule)
+
+	// AI 接入中心 2.0。所有公共端点都在业务中检查开关和固定
+	// HTTPS Host，OAuth/DCR 路由按来源 IP 进行限流。
+	oauth := aiaccesshttp.NewOAuthPublicHandler(c.AiRemoteService, cfg.Web.AdminPath)
+	oauthLimit := middleware.RateLimitMiddleware(redisClient, middleware.RateLimitRule{
+		Prefix: fmt.Sprintf("%s:rate:mcp_oauth", redisPrefix), WindowSeconds: 60,
+		MaxRequests: 12, BlockSeconds: 120, MessageKey: "error.rate_limited",
+	}, middleware.KeyByIP)
+	r.GET("/.well-known/oauth-protected-resource", oauth.ResourceMetadata)
+	r.GET("/.well-known/oauth-protected-resource/mcp", oauth.ResourceMetadata)
+	r.GET("/.well-known/oauth-authorization-server", oauth.ServerMetadata)
+	r.POST("/oauth/register", oauthLimit, oauth.Register)
+	r.GET("/oauth/authorize", oauthLimit, oauth.Authorize)
+	r.POST("/oauth/token", oauthLimit, oauth.Token)
+	r.Any("/mcp", aiaccessmcp.New(c).Serve)
 
 	// 健康检查
 	r.GET("/health", func(c *gin.Context) {

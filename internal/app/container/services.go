@@ -5,6 +5,7 @@ import aiaccessapp "github.com/dujiao-next/internal/modules/aiaccess/application
 // initServices 按依赖顺序装配各阶段 Service。
 func (c *Container) initServices() {
 	c.AiAccessService = aiaccessapp.New(c.AiAccessRepo)
+	c.AiRemoteService = aiaccessapp.NewRemote(c.AiRemoteRepo, c.AiAccessService)
 	c.initPolicyAndSettingServices()
 	c.loadRuntimeSettings()
 	c.initIdentityAndCatalogServices()

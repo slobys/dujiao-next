@@ -32,6 +32,11 @@ interface AiAudit {
 const translations = {
   'zh-CN': {
     title: 'AI 接入管理', subtitle: '统一管理 OpenClaw、Codex、Claude Code 的独立访问凭证',
+    remoteTitle: '远程 MCP · 一键连接', remoteInfo: '通过商城 HTTPS 直接连接 AI 工具，无需 NAS Python 服务或 SSH 转发。使用浏览器登录后台并批准只读权限。',
+    originLabel: '商城 HTTPS 根域名', remoteEnabled: '开启远程 MCP', remoteSave: '保存远程设置', remoteOff: '远程连接已关闭（默认安全状态）', remoteOn: '远程 MCP 已开启',
+    remoteInvalid: '开启前必须设置真实的 HTTPS 域名，例如 https://shop.example.com', remoteSaved: '远程 MCP 设置已保存',
+    commandsTitle: '复制对应工具的连接命令', commandHelp: '安装或登录过程中，会打开浏览器让你在商城后台确认授权；连接无需填写管理员密码或手动复制 Key。',
+    commandCopy: '复制命令', endpoint: '远程 MCP 地址', securityHint: '请确认域名有可信 HTTPS 证书，且原 HTTP 管理端口没有直接暴露到公网。禁用后已有远程连接立即失效。',
     warning: '当前 AI Key 只允许安全读取商品、库存和营业数据，不会授权商品上架、支付配置或退款。密钥仅显示一次，请立即妥善保存。',
     name: '应用名称', example: '例如：NAS OpenClaw / Windows Codex',
     days: '有效期（天，1–90）', scopes: '允许的能力',
@@ -49,6 +54,11 @@ const translations = {
   },
   'zh-TW': {
     title: 'AI 接入管理', subtitle: '統一管理 OpenClaw、Codex、Claude Code 的獨立存取憑證',
+    remoteTitle: '遠端 MCP · 快速連接', remoteInfo: '使用商城 HTTPS 網址直接連接，無需 NAS Python 或 SSH 轉發。瀏覽器登入後確認唯讀權限。',
+    originLabel: '商城 HTTPS 網址', remoteEnabled: '啟用遠端 MCP', remoteSave: '儲存遠端設定', remoteOff: '遠端連接已關閉', remoteOn: '遠端 MCP 已啟用',
+    remoteInvalid: '啟用前需要真實的 HTTPS 域名', remoteSaved: '遠端設定已儲存',
+    commandsTitle: '複製工具的連接指令', commandHelp: '工具會開啟瀏覽器，請在商城後台確認授權；無需在聊天中傳送管理員密碼。',
+    commandCopy: '複製指令', endpoint: '遠端 MCP 網址', securityHint: '使用可信 HTTPS 證書並關閉直接公開的 HTTP 管理埠；關閉後遠端連接立即失效。',
     warning: 'AI Key 目前僅允許安全讀取商品、庫存和營業資料，不授權上架、支付設定或退款。金鑰只顯示一次，請立即安全保存。',
     name: '應用程式名稱', example: '例如：NAS OpenClaw / Windows Codex',
     days: '有效期（天，1–90）', scopes: '允許的能力',
@@ -66,6 +76,11 @@ const translations = {
   },
   'en-US': {
     title: 'AI Access Management', subtitle: 'Manage separate credentials for OpenClaw, Codex and Claude Code',
+    remoteTitle: 'Remote MCP · Quick Connect', remoteInfo: 'Connect directly over the store HTTPS domain; no NAS Python or SSH tunnel. Authorize read-only access in your browser.',
+    originLabel: 'Store HTTPS origin', remoteEnabled: 'Enable remote MCP', remoteSave: 'Save remote settings', remoteOff: 'Remote access is disabled by default', remoteOn: 'Remote MCP enabled',
+    remoteInvalid: 'A valid public HTTPS domain is required', remoteSaved: 'Remote settings saved',
+    commandsTitle: 'Copy a connection command', commandHelp: 'The client opens a browser for admin login and explicit read-only approval. Never paste admin passwords into AI chat.',
+    commandCopy: 'Copy command', endpoint: 'Remote MCP URL', securityHint: 'Use trusted HTTPS and close any public plaintext admin port. Disabling immediately blocks remote connections.',
     warning: 'AI Keys allow read-only product, inventory and sales access. They never grant publishing, payment or refund permissions. A new token is shown only once.',
     name: 'Application name', example: 'e.g. NAS OpenClaw / Windows Codex',
     days: 'Lifetime (days, 1–90)', scopes: 'Granted capabilities',
@@ -85,6 +100,37 @@ const translations = {
 
 const { locale } = useI18n()
 const l = computed(() => translations[(locale.value as keyof typeof translations)] || translations['zh-CN'])
+interface RemoteConfig { enabled: boolean; public_origin: string }
+const remote = ref<RemoteConfig>({ enabled: false, public_origin: '' })
+const savedRemote = ref<RemoteConfig>({ enabled: false, public_origin: '' })
+const remoteBusy = ref(false)
+// Only saved server settings may appear as working connection commands.
+const mcpURL = computed(() => savedRemote.value.enabled && savedRemote.value.public_origin ? `${savedRemote.value.public_origin}/mcp` : '')
+const connectionCommands = computed(() => {
+  if (!mcpURL.value) return []
+  return [
+    { name: 'Codex', command: `codex mcp add dujiao --url ${mcpURL.value}\ncodex mcp login dujiao` },
+    { name: 'Claude Code', command: `claude mcp add --transport http dujiao ${mcpURL.value}\nclaude mcp list` },
+    { name: 'OpenClaw', command: `openclaw mcp add dujiao --url ${mcpURL.value} --transport streamable-http --auth oauth\nopenclaw mcp login dujiao` },
+  ]
+})
+const saveRemote = async () => {
+  if (remote.value.enabled && !/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(remote.value.public_origin.trim())) {
+    notifyError(l.value.remoteInvalid); return
+  }
+  remoteBusy.value = true
+  try {
+    const res = await adminAPI.updateAiRemote({ enabled: remote.value.enabled, public_origin: remote.value.public_origin.trim() })
+    savedRemote.value = res.data.data
+    remote.value = { ...savedRemote.value }
+    notifySuccess(l.value.remoteSaved)
+  } catch { notifyError(l.value.fail) }
+  finally { remoteBusy.value = false }
+}
+const copyCommand = async (value: string) => {
+  try { await navigator.clipboard.writeText(value); notifySuccess(l.value.copied) }
+  catch { notifyError(l.value.fail) }
+}
 const keys = ref<AiKey[]>([])
 const audits = ref<AiAudit[]>([])
 const busy = ref(false)
@@ -101,9 +147,12 @@ const scopeLabel = (s: Scope) => s === 'catalog:read' ? l.value.catalog : s === 
 const load = async () => {
   busy.value = true
   try {
-    const [one, two] = await Promise.all([adminAPI.listAiKeys(), adminAPI.listAiAudit()])
+    const [one, two, three] = await Promise.all([adminAPI.listAiKeys(), adminAPI.listAiAudit(), adminAPI.getAiRemote()])
     keys.value = Array.isArray(one.data?.data) ? one.data.data : []
     audits.value = Array.isArray(two.data?.data) ? two.data.data : []
+    savedRemote.value = three.data?.data || { enabled: false, public_origin: '' }
+    remote.value = { ...savedRemote.value }
+    if (!remote.value.public_origin && window.location.protocol === 'https:') remote.value.public_origin = window.location.origin
   } catch (error: any) {
     notifyError(error?.response?.data?.msg || l.value.fail)
   } finally {
@@ -167,6 +216,44 @@ onBeforeUnmount(closeToken)
       <Button variant="outline" :disabled="busy" @click="load">{{ l.refresh }}</Button>
     </div>
     <p class="rounded-md border p-4 text-sm text-muted-foreground">{{ l.warning }}</p>
+
+    <Card>
+      <CardHeader>
+        <CardTitle>{{ l.remoteTitle }}</CardTitle>
+        <p class="text-sm text-muted-foreground">{{ l.remoteInfo }}</p>
+      </CardHeader>
+      <CardContent class="space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <label class="flex items-center gap-3 text-sm">
+            <input v-model="remote.enabled" type="checkbox" />
+            <strong>{{ l.remoteEnabled }}</strong>
+          </label>
+          <span class="text-sm text-muted-foreground">{{ mcpURL ? l.remoteOn : l.remoteOff }}</span>
+        </div>
+        <label class="block space-y-1 text-sm">
+          <span>{{ l.originLabel }}</span>
+          <Input v-model="remote.public_origin" type="url" placeholder="https://shop.example.com" autocomplete="off" />
+        </label>
+        <p class="text-sm text-muted-foreground">{{ l.securityHint }}</p>
+        <Button :disabled="remoteBusy" @click="saveRemote">{{ l.remoteSave }}</Button>
+        <template v-if="mcpURL">
+          <div class="rounded-md border p-3">
+            <p class="text-sm font-medium">{{ l.endpoint }}</p>
+            <p class="mt-2 break-all font-mono text-sm">{{ mcpURL }}</p>
+            <Button class="mt-2" variant="outline" size="sm" @click="copyCommand(mcpURL)">{{ l.commandCopy }}</Button>
+          </div>
+          <h3 class="text-sm font-medium">{{ l.commandsTitle }}</h3>
+          <p class="text-sm text-muted-foreground">{{ l.commandHelp }}</p>
+          <div v-for="entry in connectionCommands" :key="entry.name" class="rounded-md border p-3">
+            <div class="flex items-center justify-between gap-2">
+              <strong class="text-sm">{{ entry.name }}</strong>
+              <Button size="sm" variant="outline" @click="copyCommand(entry.command)">{{ l.commandCopy }}</Button>
+            </div>
+            <pre class="mt-2 overflow-x-auto whitespace-pre-wrap break-all font-mono text-xs">{{ entry.command }}</pre>
+          </div>
+        </template>
+      </CardContent>
+    </Card>
 
     <Card>
       <CardHeader><CardTitle>{{ l.create }}</CardTitle></CardHeader>

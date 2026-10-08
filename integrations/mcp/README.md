@@ -1,6 +1,42 @@
 # Dujiao-Next 通用 MCP 接入：OpenClaw / Codex / Claude Code
 
-这一层提供**真正的 stdio MCP 服务**，可以供多个 AI 客户端共享商城工具。使用 [MCP 官方 Python SDK](https://github.com/modelcontextprotocol/python-sdk) v2；新增的独立 AI 机器凭证由商城 Go 后端签发和校验，**不会赋予管理员 JWT 权限，也不会开放未认证的 MCP 公网端口**。已部署旧版商城的用户首次启用 AI Key 需要备份并更新商城容器；之后各 AI 客户端本地注册 MCP 不需要再次重建商城。
+提供统一的 AI 接入方式：**推荐直接使用 Go 商城内置的、浏览器 OAuth 授权的远程 MCP**，无需 NAS 上的本地 Python/SSH 转发；同时保留使用 [MCP 官方 Python SDK](https://github.com/modelcontextprotocol/python-sdk) 的老版本地 stdio MCP 以兼容离线和内网场景。独立 AI 身份与管理员登录完全隔离，不会因为 MCP 连接而获得商城管理员 JWT。
+
+## AI 接入中心 2.0：浏览器授权连接远程 MCP
+
+**推荐新方案：** 不必在 NAS/Windows 安装或运行本目录的 Python 服务。商城在 **同一 Go 进程**内提供官方 SDK 的远程无状态 Streamable HTTP `/mcp`；它**默认关闭**，仅系统管理员可在后台开启，必须填写真实、可信的 HTTPS 根域名。
+
+升级已经部署的 Fork 时，先在 Vultr 通过 `sudo dujiao-fork backup` 备份并核验备份，再执行 `sudo dujiao-fork update` **构建包含新 Go 后端和 Vue 管理后台的镜像**；仅执行 `git pull` 不会更新正在运行的镜像。请先使用安装器菜单 9 完成域名 HTTPS，并将旧的公开 `18080` HTTP 入口改成仅本机访问，限制 Vultr 防火墙来源；不要从浏览器公开传输管理员密码。
+
+升级后打开商城**系统设置 → AI 接入管理 → 远程 MCP**，检查填写的真实站点 HTTPS 根域名（例如 `https://shop.example.com`），打开开关并保存。面板会自动显示当前真实域名对应的 `/mcp` 地址，并提供 Codex / Claude Code / OpenClaw 的**复制配置**功能。保存前以及关闭时不会生成可用连接命令。
+
+在需要连接的设备上，只运行对应的客户端命令，无需配 NAS Python、SSH、JWT：
+
+```bash
+# Codex
+codex mcp add dujiao --url https://shop.example.com/mcp
+codex mcp login dujiao
+
+# Claude Code
+claude mcp add --transport http dujiao https://shop.example.com/mcp
+# 进入 Claude Code 会话，执行 /mcp 并选择登录授权
+
+# OpenClaw
+openclaw mcp add dujiao --url https://shop.example.com/mcp --transport streamable-http --auth oauth
+openclaw mcp login dujiao
+```
+
+首次登录时，AI 客户端会打开一个浏览器授权页面；如果未登录商城，先完成正常管理员登录（包括现有 2FA），再查看**真实客户端名称、回调 URI 和只读权限**，可以取消或只批准其中一部分。授权后浏览器返回客户端，客户端自动保存会话。用户无需把后台密码交给 AI 工具，也不需要将静态 AI Key 配置到客户端。
+
+服务端使用 OAuth 授权码 + **PKCE S256**、服务端登记/校验的回调 URI、MCP Protected Resource Metadata 与 Authorization Server Metadata、兼容性动态客户端注册（DCR）；令牌绑定到当前商城 `/mcp` 资源，访问 token 有效期 **1 小时**，刷新 token 最长 **30 天**且每次刷新会轮换。令牌与授权码仅存储哈希，可通过撤销对应 AI 凭证立即使原连接失效；关闭远程 MCP 后所有远程工具/授权接口直接返回不可用。OAuth 客户端元数据文件（CIMD）尚未实现；使用不支持 DCR 回退的客户端时可能需要进一步兼容开发。
+
+远程 MCP 当前仍仅提供商品/分类、库存、营业日报和**离线不写库**的商品草稿预览，不提供退款、支付配置、订单顾客隐私或任意代码执行。启用服务不会让 AI 拥有浏览器的管理员权限。服务器持久化审计记录工具访问及密钥操作，不记录完整 bearer、客户明文内容或响应体。
+
+**注意：** `https://shop.example.com/mcp` 是给 MCP 客户端使用的端点，不是网页，浏览器直接 GET 通常会收到 405。可以先通过 `https://shop.example.com/.well-known/oauth-protected-resource/mcp` 查看授权元数据；此元数据默认关闭时返回 404，开启并 HTTPS 正常时才可访问。自定义域名、CDN 与 TLS 反向代理必须保留原始 Host 和可信的 HTTPS 转发信号。不要用 `--insecure` 跳过证书检查，也不要直接公开 Go 后端 HTTP 端口。
+
+## 可选旧方案：本地 stdio MCP
+
+以下 NAS、Windows、私网 SSH 与独立静态 AI Key 配置仍可作为可选兼容方式；**如果使用了上面的远程 MCP，一律不需要继续这些安装步骤**。
 
 ## 当前五个工具
 

@@ -14,7 +14,7 @@ import (
 )
 
 // 保留路径，不能与 admin path 冲突或互为前缀。
-var reservedPaths = []string{"/api", "/uploads", "/health"}
+var reservedPaths = []string{"/api", "/uploads", "/health", "/mcp", "/oauth", "/.well-known"}
 
 // isReservedPath 报告请求路径是否落在后端保留前缀之下。
 func isReservedPath(p string) bool {

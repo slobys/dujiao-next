@@ -5,17 +5,19 @@ import "time"
 // Key is a revocable AI-only machine credential. Token material is NEVER stored.
 // These keys do not represent admins and must not be accepted by JWT middleware.
 type Key struct {
-	ID         uint       `gorm:"primaryKey" json:"id"`
-	Name       string     `gorm:"type:varchar(100);not null" json:"name"`
-	KeyID      string     `gorm:"type:varchar(16);uniqueIndex;not null" json:"key_id"`
-	TokenHash  string     `gorm:"type:char(64);not null" json:"-"`
-	Scopes     string     `gorm:"type:varchar(128);not null" json:"-"`
-	CreatedBy  uint       `gorm:"not null;index" json:"created_by"`
-	ExpiresAt  time.Time  `gorm:"not null;index" json:"expires_at"`
-	RevokedAt  *time.Time `gorm:"index" json:"revoked_at"`
-	LastUsedAt *time.Time `json:"last_used_at"`
-	CreatedAt  time.Time  `gorm:"index" json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
+	ID            uint       `gorm:"primaryKey" json:"id"`
+	Name          string     `gorm:"type:varchar(100);not null" json:"name"`
+	KeyID         string     `gorm:"type:varchar(16);uniqueIndex;not null" json:"key_id"`
+	TokenHash     string     `gorm:"type:char(64);not null" json:"-"`
+	Audience      string     `gorm:"type:varchar(300);not null;default:''" json:"-"`
+	OAuthClientID string     `gorm:"column:oauth_client_id;type:varchar(42);not null;default:''" json:"-"`
+	Scopes        string     `gorm:"type:varchar(128);not null" json:"-"`
+	CreatedBy     uint       `gorm:"not null;index" json:"created_by"`
+	ExpiresAt     time.Time  `gorm:"not null;index" json:"expires_at"`
+	RevokedAt     *time.Time `gorm:"index" json:"revoked_at"`
+	LastUsedAt    *time.Time `json:"last_used_at"`
+	CreatedAt     time.Time  `gorm:"index" json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
 func (Key) TableName() string { return "ai_access_keys" }

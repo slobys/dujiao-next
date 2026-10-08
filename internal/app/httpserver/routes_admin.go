@@ -142,6 +142,7 @@ func registerAdminRoutes(
 
 	// 权限管理
 	aiaccesshttp.RegisterAdminRoutes(authorized, aiaccesshttp.NewAdminHandler(c.AiAccessService))
+	aiaccesshttp.RegisterRemoteAdminRoutes(authorized, aiaccesshttp.NewRemoteAdminHandler(c.AiRemoteService))
 	adminauthztransport.RegisterAdminRoutes(authorized, adminAuthzHandler)
 	auditlogtransport.RegisterAdminRoutes(authorized, adminAuditLogHandler)
 	authorized.GET("/authz/permissions/catalog", func(ctx *gin.Context) {

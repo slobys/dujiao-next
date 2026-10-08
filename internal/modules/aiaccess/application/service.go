@@ -170,9 +170,34 @@ func (s *Service) Audits(ctx context.Context, limit int) ([]domain.Audit, error)
 	return s.repo.Audits(ctx, limit)
 }
 
+// Authenticate limits old /api/v1/ai/* APIs to original non-OAuth keys.
+// Audience-bound OAuth tokens are valid ONLY for their MCP resource.
 func (s *Service) Authenticate(ctx context.Context, token, scope string) (*domain.Key, error) {
+	if !permitted[scope] {
+		return nil, ErrNotAuthorized
+	}
+	key, err := s.authenticateRaw(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if key.Audience != "" || !HasScope(key.Scopes, scope) {
+		return nil, ErrNotAuthorized
+	}
+	return key, nil
+}
+func (s *Service) AuthenticateMCP(ctx context.Context, token, resource string) (*domain.Key, error) {
+	key, err := s.authenticateRaw(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if resource == "" || key.Audience != resource {
+		return nil, ErrNotAuthorized
+	}
+	return key, nil
+}
+func (s *Service) authenticateRaw(ctx context.Context, token string) (*domain.Key, error) {
 	parts := keyPattern.FindStringSubmatch(token)
-	if parts == nil || !permitted[scope] {
+	if parts == nil {
 		return nil, ErrNotAuthorized
 	}
 	key, err := s.repo.FindKey(ctx, parts[1])
@@ -190,11 +215,9 @@ func (s *Service) Authenticate(ctx context.Context, token, scope string) (*domai
 	if subtle.ConstantTimeCompare(stored, digest[:]) != 1 || key.RevokedAt != nil || !s.Now().Before(key.ExpiresAt) {
 		return nil, ErrNotAuthorized
 	}
-	if !HasScope(key.Scopes, scope) {
-		return nil, ErrNotAuthorized
-	}
 	return key, nil
 }
+
 func (s *Service) RecordUse(ctx context.Context, key *domain.Key, route, result string) error {
 	if key == nil {
 		return fmt.Errorf("nil ai key")

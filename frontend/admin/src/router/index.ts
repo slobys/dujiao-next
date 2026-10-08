@@ -322,6 +322,12 @@ const routes = [
         meta: { permission: 'GET:/admin/ai-access/keys' },
       },
       {
+        path: 'ai-authorize',
+        name: 'ai-authorize',
+        component: () => import('@/views/admin/AiAuthorize.vue'),
+        meta: { permission: 'GET:/admin/ai-access/oauth/requests/:id' },
+      },
+      {
         path: 'telegram-bot',
         name: 'telegram-bot',
         component: () => import('@/views/admin/TelegramBot.vue'),
@@ -409,11 +415,12 @@ router.beforeEach(async (to) => {
   const authStore = useAdminAuthStore()
 
   if (to.meta.requiresAuth && !authStore.token) {
-    return { path: '/login' }
+    return { path: '/login', query: { redirect: to.fullPath } }
   }
 
   if (to.path === '/login' && authStore.token) {
-    return { path: '/' }
+    const redirect = typeof to.query.redirect === 'string' ? to.query.redirect : ''
+    return { path: redirect.startsWith('/') && !redirect.startsWith('//') ? redirect : '/' }
   }
 
   if (to.meta.requiresAuth && authStore.token && !authStore.permissionsLoaded) {

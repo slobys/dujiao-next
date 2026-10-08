@@ -613,6 +613,11 @@ export const adminAPI = {
   rotateAiKey: (id: number) => api.post(`/admin/ai-access/keys/${id}/rotate`),
   revokeAiKey: (id: number) => api.post(`/admin/ai-access/keys/${id}/revoke`),
   listAiAudit: () => api.get('/admin/ai-access/audit', { params: { limit: 50 } }),
+  getAiRemote: () => api.get('/admin/ai-access/remote'),
+  updateAiRemote: (data: { enabled: boolean; public_origin: string }) => api.put('/admin/ai-access/remote', data),
+  getAiOAuthRequest: (id: string) => api.get(`/admin/ai-access/oauth/requests/${encodeURIComponent(id)}`),
+  approveAiOAuth: (data: { request_id: string; scopes: string[] }) => api.post('/admin/ai-access/oauth/approve', data),
+  denyAiOAuth: (id: string) => api.post('/admin/ai-access/oauth/deny', { request_id: id }),
 
   // Channel Clients (Bot Clients)
   getChannelClients: () => api.get('/admin/channel-clients'),

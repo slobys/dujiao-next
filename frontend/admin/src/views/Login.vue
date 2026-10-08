@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -14,6 +14,12 @@ import TurnstileCaptcha from '@/components/captcha/TurnstileCaptcha.vue'
 
 const { t } = useI18n()
 const router = useRouter()
+const route = useRoute()
+const afterLogin = () => {
+  const target = typeof route.query.redirect === 'string' ? route.query.redirect : ''
+  const safe = target.startsWith('/') && !target.startsWith('//') ? target : '/'
+  router.replace(safe)
+}
 const authStore = useAdminAuthStore()
 
 type Step = 'password' | 'totp'
@@ -109,7 +115,7 @@ const submitPassword = async () => {
       useRecovery.value = false
       startCountdown()
     } else {
-      router.push('/')
+      afterLogin()
     }
   } catch (err: any) {
     error.value = err?.message || t('admin.login.errors.invalidCredentials')
@@ -141,7 +147,7 @@ const submit2FA = async () => {
         : { code: totpCode.value },
     )
     stopCountdown()
-    router.push('/')
+    afterLogin()
   } catch (err: any) {
     // API client (src/api/client.ts) reject 的是 Error 实例，仅含已翻译的 message。
     // 5 次失败 / 挑战失效后 backend 返回相应翻译消息，用户可通过倒计时到期自动退回或手动点击「返回」按钮回到密码步骤。
