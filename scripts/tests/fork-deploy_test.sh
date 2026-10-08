@@ -284,8 +284,8 @@ else
 fi
 check "existing flock made no APT calls" test ! -e "$TEST_TMP/flock-existing-apt"
 
-menu_expected=(install status logs backup update restart help configure-network configure-domain https-status exit)
-menu_codes=(1 2 3 4 5 6 7 8 9 10 0)
+menu_expected=(install status logs backup update restart help configure-network configure-domain https-status access exit)
+menu_codes=(1 2 3 4 5 6 7 8 9 10 11 0)
 for i in "${!menu_codes[@]}"; do
   actual=$(menu_command_for "${menu_codes[$i]}")
   if [[ "$actual" == "${menu_expected[$i]}" ]]; then
@@ -294,7 +294,7 @@ for i in "${!menu_codes[@]}"; do
     fail "menu choice ${menu_codes[$i]} resolves to ${menu_expected[$i]}"
   fi
 done
-if menu_command_for 11 >/dev/null; then
+if menu_command_for 12 >/dev/null; then
   fail "menu rejects unknown choices"
 else
   pass "menu rejects unknown choices"
@@ -581,7 +581,7 @@ check "Compose validation failure restores healthy old app" grep -Fxq 'up -d --n
 # Explicit environment mode remains usable without a tty for automation.
 DUJIAO_BIND=127.0.0.1 DUJIAO_PORT=18088 run_configure_network
 check "CLI changes public binding to loopback" assert_equal_network "127.0.0.1 18088"
-DUJIAO_BIND=0.0.0.0 DUJIAO_PORT=18088 DUJIAO_CONFIRM_PUBLIC=YES run_configure_network
+DUJIAO_BIND=0.0.0.0 DUJIAO_PORT=18088 DUJIAO_CONFIRM_PUBLIC=YES DUJIAO_PUBLIC_IP=8.8.8.8 run_configure_network
 check "CLI can restore publicly bound port with explicit consent" assert_equal_network "0.0.0.0 18088"
 check "CLI keeps Redis secret private" grep -Fxq 'REDIS_PASSWORD=do-not-print-secret' "$network_file"
 check "no .env rollback artifacts remain" test -z "$(find "$INSTALL_DIR" -maxdepth 1 -name '.env.network-backup.*' -print -quit)"
@@ -862,5 +862,247 @@ if (
 else
   pass "symlinked Caddy storage path is rejected"
 fi
+
+# Installation UX and public-IP link output regression tests. No external
+# HTTP, Docker, or public infrastructure is contacted by these test cases.
+if [[ "$(install_mode_bind 1)" == "0.0.0.0" ]]; then
+  pass "first install mode 1 binds all IPv4 interfaces"
+else
+  fail "first install mode 1 binds all IPv4 interfaces"
+fi
+if [[ "$(install_mode_bind 2)" == "127.0.0.1" ]]; then
+  pass "first install mode 2 binds loopback only"
+else
+  fail "first install mode 2 binds loopback only"
+fi
+reject "first install rejects unlisted choice" install_mode_bind 3
+if [[ "$(DUJIAO_BIND=0.0.0.0 choose_install_bind)" == "0.0.0.0" ]]; then
+  pass "explicit public bind skips interactive prompt"
+else
+  fail "explicit public bind skips interactive prompt"
+fi
+if [[ "$(DUJIAO_BIND=127.0.0.1 choose_install_bind)" == "127.0.0.1" ]]; then
+  pass "explicit private bind skips interactive prompt"
+else
+  fail "explicit private bind skips interactive prompt"
+fi
+check "public IPv4 validator accepts global IP" validate_global_ipv4 8.8.8.8
+reject "public IPv4 rejects loopback" validate_global_ipv4 127.0.0.1
+reject "public IPv4 rejects private address" validate_global_ipv4 192.168.2.1
+reject "public IPv4 rejects documentation block" validate_global_ipv4 203.0.113.10
+reject "public IPv4 rejects all-interfaces bind" validate_global_ipv4 0.0.0.0
+reject "public IPv4 rejects malformed address" validate_global_ipv4 '8.8.8.8;evil'
+public_echo=$(
+  has_command() { [[ "$1" == curl ]]; }
+  curl() { printf '8.8.8.8\n'; }
+  detect_public_ipv4
+)
+if [[ "$public_echo" == "8.8.8.8" ]]; then
+  pass "consistent HTTPS IP providers yield real public IP"
+else
+  fail "consistent HTTPS IP providers yield real public IP"
+fi
+if (
+  has_command() { [[ "$1" == curl ]]; }
+  curl() {
+    if [[ "$*" == *"api.ipify.org"* ]]; then printf '8.8.8.8'; else printf '1.1.1.1'; fi
+  }
+  detect_public_ipv4
+) >/dev/null 2>&1; then
+  fail "different IP providers must not be silently trusted"
+else
+  pass "different IP providers must not be silently trusted"
+fi
+if (
+  has_command() { [[ "$1" == curl ]]; }
+  curl() { printf '192.168.1.12'; }
+  detect_public_ipv4
+) >/dev/null 2>&1; then
+  fail "private IPv4 echoed by endpoint is rejected"
+else
+  pass "private IPv4 echoed by endpoint is rejected"
+fi
+ip_from_route=$(
+  has_command() { [[ "$1" == ip ]]; }
+  ip() { printf '1.1.1.1 via 8.8.8.254 dev eth0 src 8.8.8.8\n'; }
+  detect_public_ipv4
+)
+if [[ "$ip_from_route" == "8.8.8.8" ]]; then
+  pass "server network route provides public IPv4 fallback"
+else
+  fail "server network route provides public IPv4 fallback"
+fi
+if (
+  DUJIAO_PUBLIC_IP=192.168.1.1
+  detect_public_ipv4
+) >/dev/null 2>&1; then
+  fail "invalid manual public IPv4 is refused"
+else
+  pass "invalid manual public IPv4 is refused"
+fi
+if [[ "$(DUJIAO_PUBLIC_IP=8.8.8.8 detect_public_ipv4)" == "8.8.8.8" ]]; then
+  pass "explicit validated public IPv4 override works"
+else
+  fail "explicit validated public IPv4 override works"
+fi
+
+# Ensure both URLs are actually usable strings; 0.0.0.0 must never appear
+# as a browser address. Domain is preferred only with a verified TLS cert.
+public_links=$(
+  https_enabled() { return 1; }
+  detect_public_ipv4() { printf '8.8.8.8'; }
+  print_access_links 0.0.0.0 18080 /dj-random-admin
+)
+assert_contains "public IP produces copyable storefront URL" "$public_links" '商城地址：http://8.8.8.8:18080'
+assert_contains "public IP produces copyable admin URL" "$public_links" '后台地址：http://8.8.8.8:18080/dj-random-admin'
+if [[ "$public_links" == *'http://0.0.0.0'* ]]; then
+  fail "must not print wildcard address as browser URL"
+else
+  pass "must not print wildcard address as browser URL"
+fi
+tls_links=$(
+  https_enabled() { return 0; }
+  https_current_domain() { printf 'shop.example.com'; }
+  verify_https() { return 0; }
+  detect_public_ipv4() { printf '8.8.8.8'; }
+  print_access_links 0.0.0.0 18080 /dj-admin
+)
+assert_contains "verified HTTPS domain takes precedence" "$tls_links" '商城地址：https://shop.example.com'
+assert_contains "HTTPS domain prints complete admin path" "$tls_links" '后台地址：https://shop.example.com/dj-admin'
+if [[ "$tls_links" == *'http://8.8.8.8'* ]]; then
+  fail "verified HTTPS link should not be replaced by insecure IP URL"
+else
+  pass "verified HTTPS link should not be replaced by insecure IP URL"
+fi
+failed_tls_links=$(
+  https_enabled() { return 0; }
+  https_current_domain() { printf 'shop.example.com'; }
+  verify_https() { return 1; }
+  detect_public_ipv4() { printf '8.8.8.8'; }
+  print_access_links 0.0.0.0 18080 /dj-admin
+)
+if [[ "$failed_tls_links" == *'https://shop.example.com'* ]]; then
+  fail "must not present unverified HTTPS domain as working"
+else
+  pass "must not present unverified HTTPS domain as working"
+fi
+local_links=$(
+  https_enabled() { return 1; }
+  detect_public_ipv4() { printf '8.8.8.8'; }
+  print_access_links 127.0.0.1 18080 /dj-admin
+)
+assert_contains "loopback URL clearly warns local-only" "$local_links" '此地址仅能在服务器本机使用'
+if [[ "$local_links" == *'http://8.8.8.8'* ]]; then
+  fail "private-only listener must not print public IP URL"
+else
+  pass "private-only listener must not print public IP URL"
+fi
+if (
+  https_enabled() { return 1; }
+  detect_public_ipv4() { return 1; }
+  print_access_links 0.0.0.0 18080 /dj-admin
+) > "$TEST_DIR/no-public-ip-links"; then
+  pass "public IPv4 detection failure prints clear fallback guidance"
+else
+  fail "public IPv4 detection failure prints clear fallback guidance"
+fi
+if grep -Eq 'http://(0\.0\.0\.0|127\.0\.0\.1):18080' "$TEST_DIR/no-public-ip-links"; then
+  fail "public listener without IP must not return a misleading URL"
+else
+  pass "public listener without IP must not return a misleading URL"
+fi
+if [[ "$(read_admin_path)" == "/dj-test123" ]]; then
+  pass "admin path is derived from saved config, not guessed"
+else
+  fail "admin path is derived from saved config, not guessed"
+fi
+
+
+# Simulate a real fresh installation from menu choice 1, without network,
+# package managers or Docker. Assert that the selected public bind is the one
+# persisted to Compose and that the FINAL URL contains the detected public IP.
+if (
+  INSTALL_DIR="$TEST_DIR/fresh-public-install"
+  unset DUJIAO_BIND
+  DUJIAO_PORT=18080
+  choose_install_bind() { printf '0.0.0.0'; }
+  ensure_install_dependencies() { :; }
+  check_compose_project_conflicts() { :; }
+  git() {
+    [[ "$1" == clone ]] || return 1
+    local dest="${!#}"
+    mkdir -p "$dest/.git"
+    cp "$REPO_DIR/config.yml.example" "$dest/config.yml.example"
+  }
+  compose() { printf '%s\n' "$*" >> "$TEST_DIR/fresh-public-compose-calls"; }
+  wait_for_health() { return 0; }
+  install_manager_link() { :; }
+  detect_public_ipv4() { printf '8.8.8.8'; }
+  run_install
+) > "$TEST_DIR/fresh-public-install.output" 2>&1; then
+  pass "fresh install can finish with public-access mode"
+else
+  fail "fresh install can finish with public-access mode"
+fi
+check "fresh public setup persists 0.0.0.0 binding" grep -Fxq 'DUJIAO_BIND=0.0.0.0' "$TEST_DIR/fresh-public-install/.env"
+check "fresh public Docker Compose config uses selected bind" grep -Fq '"${DUJIAO_BIND}:${DUJIAO_PORT}:8080"' "$TEST_DIR/fresh-public-install/compose.yaml"
+check "fresh public install prints copy-ready public storefront URL" grep -Fxq '商城地址：http://8.8.8.8:18080' "$TEST_DIR/fresh-public-install.output"
+check "fresh public install prints copy-ready random admin URL" grep -Eq '^后台地址：http://8\.8\.8\.8:18080/dj-[a-f0-9]{16}$' "$TEST_DIR/fresh-public-install.output"
+if grep -Eq '(访问地址|后台地址|商城地址)：http://0\.0\.0\.0' "$TEST_DIR/fresh-public-install.output"; then
+  fail "fresh install must never show 0.0.0.0 as browser address"
+else
+  pass "fresh install must never show 0.0.0.0 as browser address"
+fi
+check "fresh setup preserves SQLite volume" grep -Fq './data/db:/app/db' "$TEST_DIR/fresh-public-install/compose.yaml"
+check "fresh setup persists admin secret safely" test "$(stat -c %a "$TEST_DIR/fresh-public-install/data/config.yml")" = "600"
+
+# Simulate menu choice 2; no extra HTTP probe and never output a public URL.
+if (
+  INSTALL_DIR="$TEST_DIR/fresh-private-install"
+  unset DUJIAO_BIND
+  DUJIAO_PORT=18080
+  choose_install_bind() { printf '127.0.0.1'; }
+  ensure_install_dependencies() { :; }
+  check_compose_project_conflicts() { :; }
+  git() {
+    [[ "$1" == clone ]] || return 1
+    local dest="${!#}"
+    mkdir -p "$dest/.git"
+    cp "$REPO_DIR/config.yml.example" "$dest/config.yml.example"
+  }
+  compose() { :; }
+  wait_for_health() { return 0; }
+  install_manager_link() { :; }
+  detect_public_ipv4() { printf 'UNEXPECTED_PUBLIC_IP'; return 1; }
+  run_install
+) > "$TEST_DIR/fresh-private-install.output" 2>&1; then
+  pass "fresh install can finish with localhost-only mode"
+else
+  fail "fresh install can finish with localhost-only mode"
+fi
+check "fresh private setup remains loopback-only" grep -Fxq 'DUJIAO_BIND=127.0.0.1' "$TEST_DIR/fresh-private-install/.env"
+check "fresh private links warn browser cannot access from internet" grep -Fq '浏览器从外网无法打开' "$TEST_DIR/fresh-private-install.output"
+check "fresh private install prints correct localhost storefront" grep -Fxq '商城地址：http://127.0.0.1:18080' "$TEST_DIR/fresh-private-install.output"
+
+# Resuming an existing managed deployment must retain the chosen original
+# binding, avoid regenerating JWT/Redis keys, and reprint correct URLs.
+cp "$TEST_DIR/fresh-public-install/.env" "$TEST_DIR/fresh-public-before.env"
+if (
+  INSTALL_DIR="$TEST_DIR/fresh-public-install"
+  DUJIAO_BIND=127.0.0.1 # ignored for existing managed installations
+  ensure_install_dependencies() { :; }
+  compose() { printf '%s\n' "$*" >> "$TEST_DIR/fresh-resume-calls"; }
+  wait_for_health() { return 0; }
+  install_manager_link() { :; }
+  detect_public_ipv4() { printf '8.8.8.8'; }
+  run_install
+) > "$TEST_DIR/fresh-resume.output" 2>&1; then
+  pass "repeat install reuses existing managed deployment safely"
+else
+  fail "repeat install reuses existing managed deployment safely"
+fi
+check "repeat install does not overwrite public bind or Redis password" cmp -s "$TEST_DIR/fresh-public-before.env" "$TEST_DIR/fresh-public-install/.env"
+check "repeat install reprints the detected public IP" grep -Fxq '商城地址：http://8.8.8.8:18080' "$TEST_DIR/fresh-resume.output"
+
 printf '%d passed, %d failed\n' "$passed" "$failed"
 ((failed == 0))

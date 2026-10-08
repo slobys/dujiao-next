@@ -45,7 +45,7 @@ sudo bash /tmp/dujiao-fork-deploy.sh install
 
 脚本自动执行：检测系统与 Docker → 安装缺失依赖 → 克隆 Fork → 构建单镜像全栈应用 → 生成不同的随机密钥和管理员初始密码 → 启动独立 Redis → 持久化 SQLite、上传文件和日志 → 检查服务健康状态。如果安装 Docker 需要替换机器现有容器运行时，或官方 APT 源不可达，安装会安全停止并给出原因，而不会偷偷卸载已有服务。
 
-**默认地址：** `http://127.0.0.1:18080`（只允许服务器本机访问）。首次成功安装时，终端会显示随机后台路径和管理员初始密码；请立即保存并在首次登录后修改。
+**安装成功后会自动显示真实可复制的商城和后台链接**：有可信 HTTPS 域名时优先显示域名，否则在公网监听模式检测服务器公网 IPv4。只有选了“仅本机访问”才输出 `127.0.0.1`。后台初始密码只在首次安装时显示一次，请妥善保管并立即修改。
 
 安装完成后可在服务器本机检查：
 
@@ -54,6 +54,30 @@ curl -fsS http://127.0.0.1:18080/health
 sudo dujiao-fork status
 ```
 
+### 首次安装选择与可复制链接
+
+在 **SSH 交互终端**执行 `install`，安装器会询问如何访问：
+
+- **1（默认）公网 IP + 端口：** Docker 监听 `0.0.0.0:18080`，安装后通过可信 HTTPS 服务自动检测真实公网 IPv4，直接输出完整商城地址和带随机后台路径的管理地址。公网 HTTP 仅适合初始调试，请尽快通过菜单 **9** 配置域名及 HTTPS。
+- **2 仅本机：** Docker 只监听 `127.0.0.1:18080`，适合已经使用 HTTPS 反向代理的环境；公网浏览器无法直接访问。
+
+在自动化、没有交互终端的环境中，为防止意外公开后台，仍**默认仅本机监听**；需要公网访问时明确设置 `DUJIAO_BIND=0.0.0.0`。
+
+```bash
+# 无人值守安装且需要通过公网 IP 临时访问：
+sudo env DUJIAO_BIND=0.0.0.0 DUJIAO_PORT=18080 \
+  bash /tmp/dujiao-fork-deploy.sh install
+```
+
+安装成功时输出的链接类似 `http://实际检测的公网IPv4:18080` 和 `http://实际检测的公网IPv4:18080/dj-随机路径`，**不会把 `0.0.0.0` 当成浏览器 URL**。若已配置并通过验证的 HTTPS 域名，则优先显示 `https://你的域名`，包括完整后台路径。公网 IPv4 检测不等于端口从外部已经放通；如公网浏览器仍无法打开，请检查 Vultr 云防火墙、端口映射和是否错误地选择了“仅本机”。
+
+如果公网 IP 自动检测失败，会明确提示而非猜测。可以到 Vultr 控制台核对后手动指定：
+
+```bash
+sudo env DUJIAO_PUBLIC_IP=你的真实公网IPv4 dujiao-fork access
+```
+
+已安装的商城无需重新部署，就能再次打印完整访问链接：`sudo dujiao-fork access`，或进入管理菜单选择 **11）显示访问链接**。**不会再次显示初始化密码。**
 ### 3. 一键配置域名 + HTTPS（Caddy 自动申请和续期）
 
 先在域名 DNS 中添加 **A 记录**，例如将 `shop.example.com` 指向 Vultr **公网 IPv4**，在 Vultr 云防火墙和系统防火墙开放 **TCP 80/443**。检查错误的 AAAA/IPv6 记录。使用 Cloudflare 时，首次申请证书建议先用**仅 DNS（灰云）**；启用代理后选 **Full (strict)**，不要使用 Flexible。
@@ -106,6 +130,7 @@ sudo env DUJIAO_BIND=0.0.0.0 DUJIAO_PORT=18080 \
 | `sudo dujiao-fork configure-network` | 交互式修改监听 IP、端口，自动重建应用，失败尝试回滚 |
 | `sudo dujiao-fork configure-domain` | 一键绑定域名、申请 Caddy HTTPS 证书和自动续期 |
 | `sudo dujiao-fork https-status` | 检查有效证书和商城 HTTPS 健康状态 |
+| `sudo dujiao-fork access` | 输出实际公网 IPv4 或已验证 HTTPS 域名的商城/后台完整链接 |
 
 运行 **`sudo dujiao-fork`**（不带参数）可进入中文交互式菜单；脚本自动化仍可以使用上表的独立命令。菜单不会增加自动卸载、公开数据或修改支付设置等高危操作。
 

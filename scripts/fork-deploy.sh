@@ -451,15 +451,205 @@ check_compose_project_conflicts() {
   [[ -z "$existing" ]] || die "已有其他容器占用 Compose 项目名 $COMPOSE_PROJECT，拒绝接管。"
 }
 
+# First install explicitly chooses whether the port should be reachable from
+# outside the server. A noninteractive install still defaults to loopback.
+install_mode_bind() {
+  case "$1" in
+    1) printf '0.0.0.0' ;;
+    2) printf '127.0.0.1' ;;
+    *) return 1 ;;
+  esac
+}
+
+choose_install_bind() {
+  # Explicit DUJIAO_BIND is an intentional operator override.
+  if [[ -n "${DUJIAO_BIND+x}" ]]; then
+    validate_bind_ip "$DUJIAO_BIND" || die "DUJIAO_BIND 必须是合法 IPv4 地址。"
+    if [[ "$DUJIAO_BIND" != 127.* ]]; then
+      info "已指定非回环监听 $DUJIAO_BIND，浏览器可能通过公网 HTTP 访问；请尽快启用 HTTPS 并限制来源。"
+    fi
+    printf '%s' "$DUJIAO_BIND"
+    return 0
+  fi
+
+  local answer
+  if [[ -r /dev/tty && -w /dev/tty ]]; then
+    cat >/dev/tty <<'MENU'
+
+========== 首次安装：选择访问方式 ==========
+  1) 公网 IP + 端口访问（默认，可在外部浏览器打开）
+     将监听 0.0.0.0，允许公网连接明文 HTTP。
+     仅适合初始测试；正式使用请绑定域名、开启 HTTPS。
+  2) 仅本机访问（127.0.0.1，更适合已有反向代理）
+===========================================
+MENU
+    printf '请选择 [1]：' >/dev/tty
+    IFS= read -r answer </dev/tty || die "没有完成安装访问模式选择。"
+    answer=${answer:-1}
+    install_mode_bind "$answer" || die "选项无效，仅允许 1 或 2；未开始安装。"
+  else
+    info "未检测到交互终端，安全默认仅监听 127.0.0.1；如需公网访问请明确设置 DUJIAO_BIND=0.0.0.0。"
+    install_mode_bind 2
+  fi
+}
+
+validate_global_ipv4() {
+  python3 - "$1" <<'PY'
+import ipaddress
+import sys
+try:
+    address = ipaddress.IPv4Address(sys.argv[1])
+except ipaddress.AddressValueError:
+    sys.exit(1)
+sys.exit(0 if address.is_global else 1)
+PY
+}
+
+detect_public_ipv4() {
+  local candidate url first="" second=""
+  if [[ -n "${DUJIAO_PUBLIC_IP:-}" ]]; then
+    validate_global_ipv4 "$DUJIAO_PUBLIC_IP" ||
+      die "DUJIAO_PUBLIC_IP 不是有效的公网 IPv4，拒绝输出错误的公网链接。"
+    printf '%s\n' "$DUJIAO_PUBLIC_IP"
+    return 0
+  fi
+  # Only HTTPS endpoints and no env proxies; do not assume the Docker bind
+  # address or the server's private NIC is an internet-reachable IP.
+  if has_command curl; then
+    for url in https://api.ipify.org https://ipv4.icanhazip.com; do
+      candidate=$(curl --noproxy '*' -4fsS --connect-timeout 3 --max-time 6 "$url" 2>/dev/null || true)
+      candidate=${candidate//$'\r'/}
+      candidate=${candidate//$'\n'/}
+      if validate_global_ipv4 "$candidate" 2>/dev/null; then
+        if [[ -z "$first" ]]; then
+          first="$candidate"
+        else
+          second="$candidate"
+        fi
+      fi
+    done
+  fi
+  if [[ -n "$first" ]]; then
+    if [[ -n "$second" && "$first" != "$second" ]]; then
+      info "两个独立公网 IP 检测服务返回不一致，拒绝猜测。"
+      return 1
+    fi
+    printf '%s\n' "$first"
+    return 0
+  fi
+  # On bare VPSes a global IPv4 may be assigned to the local NIC directly.
+  if has_command ip; then
+    candidate=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{
+      for (i=1; i<=NF; i++) if ($i == "src") {print $(i+1); exit}
+    }' || true)
+    if validate_global_ipv4 "$candidate" 2>/dev/null; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+read_admin_path() {
+  python3 - "$INSTALL_DIR/data/config.yml" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+lines = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+in_web = False
+found = []
+for line in lines:
+    if re.match(r"^web:\s*(?:#.*)?$", line):
+        in_web = True
+        continue
+    if re.match(r"^[a-z_]+:\s*(?:#.*)?$", line):
+        in_web = False
+    if in_web:
+        match = re.match(r"^  admin_path:\s*(.+?)\s*$", line)
+        if match:
+            try:
+                found.append(json.loads(match.group(1)))
+            except (json.JSONDecodeError, TypeError):
+                raise SystemExit("后台路径配置无法解析")
+if len(found) != 1 or not isinstance(found[0], str):
+    raise SystemExit("后台路径不存在或重复")
+path = found[0]
+if not re.fullmatch(r"/[a-zA-Z0-9_/-]{1,150}", path) or "//" in path:
+    raise SystemExit("后台路径格式异常")
+print(path)
+PY
+}
+
+print_access_links() {
+  local bind=$1 port=$2 admin_path=$3 base="" domain="" public_ip=""
+  validate_bind_ip "$bind" && validate_port "$port" ||
+    die "无法显示链接：当前监听地址或端口格式错误。"
+  if https_enabled; then
+    domain=$(https_current_domain)
+    if verify_https "$domain"; then
+      base="https://$domain"
+    else
+      info "配置了域名 $domain，但 HTTPS 尚未通过验证，不输出未经验证的 HTTPS 链接。"
+    fi
+  fi
+  if [[ -z "$base" ]]; then
+    if [[ "$bind" == "0.0.0.0" ]]; then
+      if public_ip=$(detect_public_ipv4); then
+        base="http://$public_ip:$port"
+      else
+        info "暂时无法可靠取得公网 IP；你可在 Vultr 控制台查看 IPv4 并访问 http://公网IP:$port"
+      fi
+    else
+      base="http://$bind:$port"
+    fi
+  fi
+
+  printf '\n========== 商城访问链接 ==========\n'
+  if [[ -n "$base" ]]; then
+    printf '商城地址：%s\n' "$base"
+    if [[ -n "$admin_path" ]]; then
+      printf '后台地址：%s%s\n' "$base" "$admin_path"
+    else
+      printf '后台地址：暂时无法从配置读取，请检查 data/config.yml。\n'
+    fi
+  else
+    printf '商城地址：尚未取得可信公网 IP，请先核对 Vultr 实例 IPv4。\n'
+    printf '后台路径：%s\n' "$admin_path"
+  fi
+  if [[ "$base" == http://127.* ]]; then
+    printf '说明：此地址仅能在服务器本机使用，浏览器从外网无法打开。\n'
+  elif [[ "$base" == http://* ]]; then
+    printf '提示：当前是明文 HTTP，仅用于临时调试。请使用菜单 9 配置域名及 HTTPS。\n'
+    printf '提示：已检测到地址，不代表外网端口已放行；如打不开请检查 Vultr 云防火墙。\n'
+  fi
+  printf '==================================\n'
+}
+
+show_installed_links() {
+  require_installed
+  local bind port admin_path
+  read -r bind port < <(network_env_current)
+  if ! admin_path=$(read_admin_path 2>/dev/null); then
+    admin_path=""
+    info "无法读取后台路径，仅显示商城访问地址；请检查 data/config.yml。"
+  fi
+  print_access_links "$bind" "$port" "$admin_path"
+}
+
 run_install() {
   local bind_ip="${DUJIAO_BIND:-127.0.0.1}"
   local port="${DUJIAO_PORT:-18080}"
-  validate_bind_ip "$bind_ip" || die "DUJIAO_BIND 必须是合法 IPv4 地址。"
-  validate_port "$port" || die "DUJIAO_PORT 必须是 1024-65535 的端口。"
-  # Refuse foreign installation directories before changing host packages.
+  # Refuse foreign installation directories before presenting new-install
+  # prompts or changing host packages. Existing installations keep their bind.
   if [[ -e "$INSTALL_DIR" ]]; then
     require_installed
+  else
+    bind_ip=$(choose_install_bind)
   fi
+  validate_bind_ip "$bind_ip" || die "DUJIAO_BIND 必须是合法 IPv4 地址。"
+  validate_port "$port" || die "DUJIAO_PORT 必须是 1024-65535 的端口。"
   ensure_install_dependencies
   if [[ -e "$INSTALL_DIR" ]]; then
     require_installed
@@ -468,6 +658,7 @@ run_install() {
     wait_for_health || die "启动失败；请查看日志。"
     install_manager_link
     info "已恢复部署。实际监听地址请查看 $INSTALL_DIR/.env（没有修改已有配置）。"
+    show_installed_links
     return
   fi
   check_compose_project_conflicts
@@ -500,9 +691,9 @@ run_install() {
   compose up -d --build
   wait_for_health || die "启动未通过健康检查；配置和数据已保留，修复后可重运行 install。"
   install_manager_link
-  printf '\n安装成功（请妥善保管首次凭据）：\n访问地址：http://%s:%s\n后台地址：http://%s:%s%s\n管理员：admin\n初始密码：%s\n\n' \
-    "$bind_ip" "$port" "$bind_ip" "$port" "$admin_path" "$admin_password"
-  info "默认仅监听本机！生产环境请通过 HTTPS 反向代理公开访问，并在首次登录后修改管理员密码。"
+  printf '\n安装成功（请妥善保管首次凭据）：\n管理员：admin\n初始密码：%s\n' "$admin_password"
+  info "请立即修改初始密码、启用 2FA；公网访问请优先配置 HTTPS。"
+  print_access_links "$bind_ip" "$port" "$admin_path"
 }
 
 run_backup() {
@@ -698,6 +889,7 @@ run_configure_network() {
   else
     prompt_network_configuration
   fi
+  show_installed_links
 }
 
 
@@ -905,6 +1097,7 @@ run_configure_https() {
     if [[ "$domain" == "$current" && -z "$email" ]]; then
       if verify_https "$domain"; then
         info "https://$domain 证书与 /health 均验证通过，Caddy 会自动续期。"
+        show_installed_links
         return 0
       fi
       info "此前配置的域名证书或容器不可用，将保留旧配置备份并重新尝试启动 Caddy。"
@@ -966,6 +1159,7 @@ run_configure_https() {
       info "警告：未能收紧明文 HTTP 端口 $old_port；请手动通过 configure-network 或防火墙限制访问。"
     fi
   fi
+  show_installed_links
 }
 
 run_https_status() {
@@ -980,6 +1174,7 @@ run_https_status() {
   compose ps caddy
   if verify_https "$domain"; then
     info "证书链、域名和商城 /health 均验证通过。Caddy 自动续期已启用。"
+    show_installed_links
   else
     die "HTTPS 证书或访问不可用，请检查 DNS、80/443、防火墙及 Caddy 日志。"
   fi
@@ -997,6 +1192,7 @@ menu_command_for() {
     8) printf 'configure-network' ;;
     9) printf 'configure-domain' ;;
     10) printf 'https-status' ;;
+    11) printf 'access' ;;
     0|q|Q) printf 'exit' ;;
     *) return 1 ;;
   esac
@@ -1019,13 +1215,14 @@ run_menu() {
   8) 修改监听 IP / 端口（自动重建应用，失败恢复）
   9) 一键绑定域名并申请 HTTPS 证书（Caddy 自动续期）
  10) 查看 HTTPS 证书与访问状态
+ 11) 显示可复制的商城和后台访问链接
   0) 退出
 ===========================================
 MENU
     printf '请输入编号: ' >/dev/tty
     IFS= read -r choice </dev/tty || return 0
     if ! action=$(menu_command_for "$choice"); then
-      info "无效的菜单编号：请使用 0-10。"
+      info "无效的菜单编号：请使用 0-11。"
       continue
     fi
     [[ "$action" != "exit" ]] || return 0
@@ -1044,6 +1241,7 @@ execute_command() {
     configure-network) require_tools; run_configure_network ;;
     configure-domain) require_tools; run_configure_https ;;
     https-status) require_tools; run_https_status ;;
+    access) require_tools; show_installed_links ;;
     help) usage ;;
     *) die "未知操作。";;
   esac
@@ -1052,7 +1250,7 @@ execute_command() {
 usage() {
   cat <<'HELP'
 Dujiao-Next fork Docker 管理器
-用法：sudo bash fork-deploy.sh [menu|install|update|status|logs|restart|backup|configure-network|configure-domain|https-status|help]
+用法：sudo bash fork-deploy.sh [menu|install|update|status|logs|restart|backup|configure-network|configure-domain|https-status|access|help]
       成功安装后可运行：sudo dujiao-fork （无参数打开交互菜单）
       也支持：sudo dujiao-fork <命令> （供自动化脚本调用）
 修改 IP/端口：sudo dujiao-fork configure-network （交互式）
@@ -1061,10 +1259,12 @@ Dujiao-Next fork Docker 管理器
 域名 HTTPS：sudo dujiao-fork configure-domain（交互式）
 无人值守：sudo env DUJIAO_DOMAIN=shop.example.com DUJIAO_ACME_EMAIL=admin@example.com dujiao-fork configure-domain
 证书校验：sudo dujiao-fork https-status（Caddy 自动续期，不需要手动续签）
+访问链接：sudo dujiao-fork access（优先验证 HTTPS 域名，否则检测真实公网 IPv4）
 请先设置域名 DNS A 记录，并确认公网 TCP 80/443 可访问。
 
 首次安装可指定：
-  DUJIAO_BIND=127.0.0.1  (默认，仅本机监听；使用 HTTPS 反向代理)
+  DUJIAO_BIND=0.0.0.0    (可选：明确使用公网监听，跳过首次安装选择)
+  DUJIAO_PUBLIC_IP=...   (可选：自动检测失败时手动指定真实公网 IPv4)
   DUJIAO_PORT=18080      (默认)
   DUJIAO_FORK_DIR=/opt/dujiao-next-fork
 安装流程自动检测并补齐 Debian/Ubuntu 的 Docker Engine、Compose V2、Buildx 及其他缺失依赖。
@@ -1078,7 +1278,7 @@ main() {
   local command="${1:-menu}"
   case "$command" in
     help|-h|--help) usage; return ;;
-    menu|install|update|status|logs|restart|backup|configure-network|configure-domain|https-status) ;;
+    menu|install|update|status|logs|restart|backup|configure-network|configure-domain|https-status|access) ;;
     *) usage; die "未知命令：$command" ;;
   esac
   require_root
