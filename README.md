@@ -1,294 +1,203 @@
-# Dujiao-Next
+# Dujiao-Next · slobys Fork
 
-Dujiao-Next is a digital goods e-commerce platform. This repository contains the complete
-application: the Go backend, the customer storefront, and the admin panel.
+基于 [Dujiao-Next](https://github.com/dujiao-next/dujiao-next) 的数字商品商城二次开发版本，包含 **Go 后端、Vue 商城前台和 Vue 管理后台**。
 
-## ❤️ Brand Partners (Sponsors)
+[![CI](https://github.com/slobys/dujiao-next/actions/workflows/ci.yml/badge.svg)](https://github.com/slobys/dujiao-next/actions/workflows/ci.yml) [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE) [![Docker Compose](https://img.shields.io/badge/Deploy-Docker%20Compose-2496ED?logo=docker&logoColor=white)](scripts/fork-deploy.sh)
 
-<table>
+> **本仓库是个人维护的 Fork，并非上游官方发行版。** 当前优先完善简易部署和运维；计划中的 AI 管理、自动报表、AI 页面设计等能力**尚未集成**。安装脚本可用性已经过静态和模拟测试，但仍需在目标服务器做完整首次安装验证。
 
-<tr>
-<td width="180"><a href="https://www.vmrack.net/?ref_code=5iXmGUMf5f5"><img src="assets/partners/vmrack.jpeg" alt="CCTK.AI" width="150"></a></td>
-<td><a href="https://www.vmrack.net/?ref_code=5iXmGUMf5f5">Vmrack.com</a> 全球自动化云基础设施服务商 提供先进的云服务器、裸金属、CDN、媒体处理、对象存储和网络解决方案，助力企业轻松上云。
-⚡️官方合作闪购款，仅需76刀/年，三网优化线路，助力您业务起飞，<a href="https://www.vmrack.net/vps/flash-deals/2082383856451452928?ref_code=5iXmGUMf5f5">👉点我直达</a>
-</td>
-</tr>
+**快速导航：** [一键部署](#-一键部署本-fork) · [管理与更新](#-日常管理) · [数据与备份](#-数据与备份) · [开发指南](#-本地开发) · [与上游的区别](#-与上游的区别)
 
-<tr>
-<td width="180"><a href="https://www.99cdn.com/"><img src="assets/partners/99cdn.jpg" alt="openmodel" width="150"></a></td>
-<td>99CDN 自建 CDN 平台，自主管理节点 · 智能流量调度 · 多级缓存加速。 <a href="https://www.99cdn.com/">99CDN</a> 是 EasyLink 旗下的商业化自建 CDN 与 DNS 智能调度平台，支持边缘缓存、分片缓存、多级回源、GTM 调度与边缘计算能力。</td>
-</tr>
+## ✨ 主要功能
 
-<tr>
-<td width="180"><a href="https://niub.me"><img src="assets/partners/niub.png" alt="openmodel" width="150"></a></td>
-<td> <a href="https://niub.me">NIUB — 数字服务，一站直达(DujiaoNext自营旗舰店)</a> 正在寻找更便捷的 AI 服务、社交账号或数字礼品卡？NIUB（niub.me）专注提供多种虚拟商品与数字服务，让不同类型的数字需求都能在一个站点完成选购。
-我们重视清晰的商品信息、明确的交付方式和负责任的售后支持。每件商品的账号类型、适用地区、有效期限、使用条件与售后范围，均以对应商品页面说明为准。
-访问 NIUB，探索更多数字服务与虚拟商品。</td>
-</tr>
-
-
-
-</table>
-
-## Tech Stack
-
-| Layer | Stack |
+| 类型 | 能力 |
 | --- | --- |
-| Backend | Go 1.26 · Gin · GORM · SQLite / PostgreSQL |
-| Auth | JWT (separate admin / user realms) · Casbin RBAC · TOTP 2FA |
-| Async | asynq on Redis (optional — the server runs without it) |
-| Config | Viper (`config.yml`) |
-| Frontend | Vue 3 · Vite · TypeScript · Tailwind CSS v4 · pnpm 10 |
-| Admin UI | shadcn-vue / reka-ui |
+| 商品交易 | 商品分类、商品展示、订单、支付与数字商品交付（来自上游） |
+| 商城界面 | Vue 3 前台及独立管理后台，多语言支持（来自上游） |
+| 权限安全 | 管理员 RBAC、JWT、TOTP 2FA（来自上游） |
+| 数据存储 | SQLite 或 PostgreSQL；Redis 用于缓存与异步任务（来自上游） |
+| **Fork 增强** | **独立 Docker Compose 源码一键部署、数据持久化、状态/日志/重启、冷备份、源码更新** |
 
-## Repository Layout
+## 🚀 一键部署（本 Fork）
 
-```
-.
-├── cmd/server/               # entry point; also hosts the `admin` operator subcommands
-├── internal/
-│   ├── app/                  # composition root
-│   │   ├── container/        # dependency-injection container
-│   │   ├── httpserver/       # Gin router, route groups, middleware
-│   │   └── jobs/             # asynq worker service and consumers
-│   ├── bootstrap/            # per-module wiring (adapters.go + wiring.go)
-│   ├── modules/              # 35 business modules — one vertical slice per domain
-│   ├── workflows/            # use cases that span several modules
-│   ├── platform/             # framework-facing infrastructure
-│   │   ├── database/gormdb/  # connection, auto-migration
-│   │   └── http/             # response envelope, Gin helpers
-│   ├── shared/               # dependency-free primitives (money, jsonmap, serial …)
-│   ├── authz/                # Casbin RBAC: policy model, built-in role seeds
-│   ├── web/                  # SPA embedding and mounting (build-tag gated)
-│   ├── architecture/         # architecture guard tests — no production code
-│   ├── cache/ config/ constants/ crypto/ i18n/ logger/ queue/ version/
-│   └── admincmd/ htmltext/ persistence/ telegramidentity/ testkit/ upstream/
-├── frontend/
-│   ├── admin/                # admin panel SPA        (dev :5174)
-│   └── user/                 # customer storefront SPA (dev :5173)
-├── config.yml.example
-├── Dockerfile                # single full-stack image
-└── .goreleaser.yaml
+本 Fork **无需先发布 GitHub Release**：安装器会从 `slobys/dujiao-next` 的 `main` 分支克隆代码，并在服务器上构建完整镜像（含前后台）。
+
+### 1. 服务器准备
+
+- 建议：Ubuntu 22.04+ / Debian 12+，x86_64 或 arm64 Linux；其它系统尚未验证。
+- 预装 [Docker Engine](https://docs.docker.com/engine/install/) 和 **Docker Compose V2**（命令为 `docker compose`，不是旧版 `docker-compose`）。
+- 系统需具备 `git`、`python3`、`openssl`、`tar`、`flock`、`curl`；首次编译会下载 Go / Node 依赖，请预留足够内存、硬盘空间。
+- 建议使用干净的测试服务器验证。安装器**不会接管**已有的上游 systemd 安装；如果目标端口已被占用，需要先调整端口。
+
+### 2. 执行安装
+
+先下载脚本、按需检查内容，再执行：
+
+```bash
+curl -fsSLo /tmp/dujiao-fork-deploy.sh \
+  https://raw.githubusercontent.com/slobys/dujiao-next/main/scripts/fork-deploy.sh
+sudo bash /tmp/dujiao-fork-deploy.sh install
 ```
 
-Runtime directories created on first start: `db/` (SQLite), `uploads/`, `logs/`.
+脚本自动执行：克隆 Fork → 构建单镜像全栈应用 → 生成不同的随机密钥和管理员初始密码 → 启动独立 Redis → 持久化 SQLite、上传文件和日志 → 检查服务健康状态。
 
-## Architecture
+**默认地址：** `http://127.0.0.1:18080`（只允许服务器本机访问）。首次成功安装时，终端会显示随机后台路径和管理员初始密码；请立即保存并在首次登录后修改。
 
-A modular monolith. Each domain under `internal/modules/<name>/` is a vertical slice with its
-own layers:
+安装完成后可在服务器本机检查：
 
-| Layer | Holds | May import |
-| --- | --- | --- |
-| `domain/` | entities, value objects, business invariants | nothing from the other layers |
-| `application/` | use cases, port interfaces | `domain`, `contract` |
-| `infrastructure/` | GORM stores, gateways, queue adapters | `domain`, `application` ports |
-| `transport/` | HTTP handlers, presenters | `application` contracts |
-| `contract/` | port interfaces the application layer depends on, and the module's public surface for other modules | — |
+```bash
+curl -fsS http://127.0.0.1:18080/health
+sudo dujiao-fork status
+```
 
-**These rules are enforced by tests, not convention.** `internal/architecture/` parses every
-import in the tree and fails the build on violations. The main ones:
+### 3. 域名与 HTTPS
 
-- `domain` must not reach into `application`, `infrastructure`, or `transport`
-- `application` must not import Gin or asynq — no transport libraries in use cases
-- only a module's `infrastructure/gormstore` adapter may import GORM
-- `transport` depends on application contracts, never on concrete stores
-- `internal/shared` stays free of modules, GORM, Gin, and asynq
-- `internal/platform` must not depend on business modules
+**安装器不自动申请证书或设置反向代理。** 正式上线请通过 Nginx、Nginx Proxy Manager (NPM) 或 Caddy 将 HTTPS 域名转发至本机 `127.0.0.1:18080`，并核对 `config.yml` 中的 `server.trusted_proxies`。
 
-Run them with the rest of the suite: `go test ./internal/architecture/...`
+> 如果 NPM 运行在**另一个 Docker 容器**中，该容器内的 `127.0.0.1` 不是宿主机。请按实际 Docker 网络或宿主机地址配置上游，不要直接照搬 `127.0.0.1`。
 
-Modules never import each other's internals — they talk through `contract/`, and the wiring
-lives in `internal/bootstrap/<module>/`.
+仅在确实需要从其它容器/机器访问宿主机端口，并已做好防火墙限制时，才在**首次安装前**设置监听地址和端口：
 
-### RBAC
+```bash
+sudo env DUJIAO_BIND=0.0.0.0 DUJIAO_PORT=18080 \
+  bash /tmp/dujiao-fork-deploy.sh install
+```
 
-Every `/api/v1/admin/...` route passes through Casbin. The permission catalog is generated
-from the live route table, but the **built-in roles are hand-maintained** in
-`internal/authz/bootstrap.go`. Adding an admin route without adding it to a role seed leaves
-that route reachable only by the super admin. `internal/app/httpserver/rbac_coverage_test.go`
-checks that every registered route is covered.
+**注意：`0.0.0.0` 会扩大端口暴露范围，切勿在没有 TLS、反向代理和访问控制的情况下直接公开管理后台。**
 
-## Build Tags
+## 🛠 日常管理
 
-| Tag | Effect |
+安装成功后，以下命令在服务器上使用（均需 `sudo`）：
+
+| 命令 | 作用 |
 | --- | --- |
-| *(none)* | API only. No SPAs mounted — the default for local development. |
-| `fullstack` | Embeds `internal/web/dist/{admin,user}` into the binary via `go:embed`. |
-| `release` | Production behavior for outbound URL building. |
+| `sudo dujiao-fork status` | 查看应用及 Redis 容器状态 |
+| `sudo dujiao-fork logs` | 查看应用和 Redis 的最近日志 |
+| `sudo dujiao-fork restart` | 重启服务并检查健康状态 |
+| `sudo dujiao-fork backup` | 停止服务写入、备份并验证归档，随后重启 |
+| `sudo dujiao-fork update` | 自动备份 → 更新 Fork `main` → 构建新镜像 → 重启并检查 |
+| `sudo dujiao-fork help` | 查看命令与可配置参数 |
 
-`go:embed all:dist/admin all:dist/user` requires **both** directories to exist, so a
-`fullstack` build fails outright if the frontends were not built first. A plain `go build`
-does not compile `embed_fullstack.go` — after touching `internal/web/`, verify with
-`go build -tags release,fullstack ./cmd/server`.
+### 更新的行为与限制
 
-## Run Modes
+- 更新使用 `git fetch` + `git merge --ff-only`，**源码存在未提交改动时直接拒绝**，不会强行覆盖。
+- 更新不会重置 `config.yml`、SQLite、Redis AOF 或上传文件；构建的应用标记为 `source`，以防站内自更新错误替换成上游版本。
+- **更新失败不会自动回滚数据库/旧镜像。** 数据库迁移可能发生在新版本启动时；务必先确认冷备份可用，再更新生产环境。需要回退时，应同时评估数据库版本和应用代码的兼容性。
+- 安装器没有自动卸载/删库命令；**不要直接运行 `docker compose down -v` 或删除数据目录。**
 
-```bash
-./dujiao-next                 # all    — HTTP server + background worker (default)
-./dujiao-next -mode api       # HTTP server only
-./dujiao-next -mode worker    # background worker only
+## 💾 数据与备份
+
+默认目录结构：
+
+```text
+/opt/dujiao-next-fork/
+├── src/                 # 本 Fork 源码（Git 仓库）
+├── compose.yaml         # 管理器生成的 Compose 配置
+├── .env                 # Redis 密码、监听端口等敏感配置
+└── data/
+    ├── config.yml       # 应用配置和密钥
+    ├── db/              # SQLite 数据库
+    ├── uploads/         # 商品及站点上传文件
+    ├── logs/            # 日志
+    └── redis/           # Redis 持久化数据
+
+/var/backups/dujiao-next-fork/
+└── dujiao-next-fork-*.tar.gz  # 备份归档
 ```
 
-Operator subcommands ship in the same binary, so a container needs no extra tooling:
+执行 `sudo dujiao-fork backup` 时会短暂停止应用与 Redis 写入，备份 `.env`、Compose 配置及 `data/`，并校验归档的可读取性。**备份含有密钥和用户数据，必须限制访问、加密异地保存，并定期验证恢复流程。**
+
+首次安装前可用环境变量调整安装目录：
 
 ```bash
-./dujiao-next admin list-admins
-./dujiao-next admin reset-password
-./dujiao-next admin reset-2fa
+sudo env DUJIAO_FORK_DIR=/opt/my-dujiao \
+  bash /tmp/dujiao-fork-deploy.sh install
 ```
 
-## Frontend Notes
+后续管理命令若使用自定义目录，也需传入同样的 `DUJIAO_FORK_DIR`。不要手工将已有数据文件夹直接覆盖到新安装目录；旧站迁移应单独执行。
 
-Two independent SPAs, both built with Vite and embedded at release time.
+## 💻 本地开发
 
-**Mount points.** The storefront is served at `/`; the admin panel at `web.admin_path`
-(default `/admin`). `/api`, `/uploads`, and `/health` are reserved prefixes — an unmatched
-path under them returns 404 instead of falling through to the SPA shell. Adding a new
-top-level backend prefix means updating `reservedPaths` in `internal/web/handler.go`.
+### 技术栈
 
-**The admin base path is resolved at runtime, not at build time.** Since `web.admin_path` is
-configurable, `pnpm run build:fullstack` only injects a `<base href="__DJ_ADMIN_BASE__/">`
-placeholder, which the server rewrites on startup. Consequences for admin code:
+| 部分 | 技术 |
+| --- | --- |
+| 后端 | Go 1.26、Gin、GORM、Viper |
+| 数据层 | SQLite / PostgreSQL；Redis / asynq |
+| 前台 | Vue 3、Vite、TypeScript、Tailwind CSS |
+| 后台 | Vue 3、shadcn-vue、reka-ui |
+| 权限 | JWT、Casbin RBAC、TOTP 2FA |
+| 构建 | pnpm 10.34.3、GoReleaser、Docker 多阶段构建 |
 
-- native `<a href>` and `window.location` navigation must go through `adminUrl()` in
-  `src/utils/adminBase.ts`
-- `<router-link :to>` and `router.push()` must **not** — vue-router already carries the base,
-  and prefixing again yields `/admin/admin/...`
-
-**Storefront templates.** The customer frontend ships more than one look, selected by the
-`storefront_template` site setting (`classic`, `vault`). Template pages live in
-`src/templates/<name>/` and fall back to `src/views/` when a page has no template-specific
-version; see `src/templates/registry.ts`. Append `?template=vault` to preview one locally.
-
-**i18n.** Both frontends and all API responses are localized — Simplified Chinese, Traditional
-Chinese, and English. Do not hard-code user-facing strings on either side.
-
-## Quick Start (Deploy)
-
-### Official one-click installer (Ubuntu / Debian)
-
-On a fresh Ubuntu 22.04+ or Debian 12+ server, download and run the official
-interactive installer:
+本地开发需要 Go、Node.js 24、Corepack/pnpm。先从 `config.yml.example` 复制 `config.yml` 并按注释替换占位密钥、设置数据库/Redis 连接后启动：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dujiao-next/dujiao-next/main/scripts/dujiao-next-manager.sh \
-  -o /tmp/dujiao-next-manager.sh
-sudo bash /tmp/dujiao-next-manager.sh install
-```
-
-The installer deploys the release binary with systemd, an isolated local Redis,
-Nginx, SQLite, and a Let's Encrypt certificate. After installation, reopen the
-management menu with:
-
-```bash
-sudo dujiao-next-manager
-```
-
-Common automation-friendly commands are also available:
-
-```bash
-sudo dujiao-next-manager status
-sudo dujiao-next-manager logs app
-sudo dujiao-next-manager restart
-sudo dujiao-next-manager configure-domain
-sudo dujiao-next-manager configure-admin-path
-sudo dujiao-next-manager renew-cert
-sudo dujiao-next-manager admin-reset-password
-sudo dujiao-next-manager admin-reset-2fa
-sudo dujiao-next-manager uninstall
-```
-
-The first release supports a single non-wildcard domain on Ubuntu/Debian only.
-It does not adopt an existing manual installation. If SMTP is skipped, configure
-it in the admin panel before enabling email-verification registration. Application
-data lives in `/opt/dujiao-next`; installer state is stored in
-`/etc/dujiao-next/install-state.json`. TLS failures leave only the ACME challenge
-endpoint enabled, and `install` can be rerun after DNS or firewall repair. Safe
-uninstall creates and verifies a `0600` recovery archive under
-`/var/backups/dujiao-next` before deleting managed data.
-
-### Manual binary installation
-
-Download the latest `dujiao-next_*.tar.gz` from [Releases](https://github.com/dujiao-next/dujiao-next/releases):
-
-```bash
-tar -xzf dujiao-next_*.tar.gz
+git clone https://github.com/slobys/dujiao-next.git
+cd dujiao-next
 cp config.yml.example config.yml
-# edit config.yml: set jwt.secret, user_jwt.secret, and web.admin_path
-./dujiao-next
+# 编辑 config.yml，至少设置 app.secret_key / jwt.secret / user_jwt.secret
+
+go run ./cmd/server     # 默认 :8080，仅 API
+# 新终端：
+cd frontend/user && corepack enable && pnpm install && pnpm run dev    # :5173
+# 另一个终端（在仓库根目录执行）：
+cd frontend/admin && corepack enable && pnpm install && pnpm run dev   # :5174
 ```
 
-Full instructions: https://dujiao-next.com/deploy/
+两个 Vite 开发服务会将 API 请求代理到 `localhost:8080`。**pnpm 命令须在对应的前端子目录执行**；不要用 `pnpm --dir`，避免选错 pnpm 版本。
 
-Or with Docker:
+### 项目结构
+
+```text
+cmd/server/              Go 入口与运维子命令
+internal/modules/        业务模块（领域 / 应用 / 基础设施 / HTTP）
+internal/bootstrap/      模块依赖装配
+internal/app/            HTTP、后台任务与组合入口
+internal/authz/          权限策略与内置角色
+internal/web/            前后台 SPA 静态资源嵌入
+frontend/user/           商城前台（含 classic/vault 模板）
+frontend/admin/          管理后台
+scripts/fork-deploy.sh   本 Fork 专用一键安装管理器
+scripts/tests/           安装脚本回归测试
+scripts/dujiao-next-manager.sh  上游 systemd 管理器（非 Fork 部署）
+```
+
+### 构建与验证
 
 ```bash
-docker run -d -p 8080:8080 -v $PWD/config.yml:/app/config.yml:ro dujiaonext/dujiao-next:latest
+bash -n scripts/fork-deploy.sh
+bash scripts/tests/fork-deploy_test.sh
+go test ./...
+
+# 前端请分别在对应目录运行：
+cd frontend/user && pnpm run test && pnpm run build
+cd ../admin && pnpm run test && pnpm run build
 ```
 
-## Quick Start (Develop)
+生产全栈构建会先将两个 SPA 打包进 `internal/web/dist/{admin,user}`，再使用 `go build -tags release,fullstack` 将页面嵌入 Go 二进制。构建流程见 [Dockerfile](Dockerfile) 与 [.goreleaser.yaml](.goreleaser.yaml)。健康检查入口为 `GET /health`。
 
-Run the backend and the two frontends separately for hot reload:
+**二次开发注意：** 后端遵守分层依赖规则；新增管理 API 需要同步维护 `internal/authz/bootstrap.go` 中的 Casbin 内置角色规则；前后台的用户界面文案须保持简体中文、繁体中文、英语三语一致。详细规则见 [AGENTS.md](AGENTS.md)。SQLite 单连接环境下必须避免事务内部绕过事务句柄查询。
 
-```bash
-go mod tidy && go run ./cmd/server   # :8080 — API only, no SPAs mounted
+## 🧩 后续规划（尚未实现）
 
-cd frontend/user  && pnpm install && pnpm run dev   # :5173
-cd frontend/admin && pnpm install && pnpm run dev   # :5174
-```
+- OpenClaw 专用管理工具：查询/创建商品、库存告警、审批后上架。
+- n8n 每日订单与销售分析，通过 Telegram/邮件发送日报。
+- Codex 协助装修页面，预览、代码审查及受控发布。
 
-Both dev servers proxy `/api`, `/uploads`, `/sitemap.xml`, and `/robots.txt` to
-`localhost:8080`. In production everything is same-origin, so these proxies are a
-development-only concern.
+这些是后续二次开发方向，不应将其误认为当前版本已经具备的 AI 自动控制功能。
 
-> Use `pnpm` via corepack. `pnpm --dir X` does not read the `packageManager` field of the
-> target directory and will pick the wrong version — `cd` into the package first.
+## 🔀 与上游的区别
 
-## Building the Full-Stack Binary
+| 安装途径 | 下载/构建来源 | 适用场景 |
+| --- | --- | --- |
+| **本 Fork：`scripts/fork-deploy.sh`** | `slobys/dujiao-next` 的最新 `main` 源码 | 使用本仓库定制代码与后续二次开发 |
+| 上游：`scripts/dujiao-next-manager.sh` | `dujiao-next/dujiao-next` GitHub Release | 使用上游官方 Linux/systemd 发行包 |
+| 上游 Docker 镜像 `dujiaonext/dujiao-next` | 上游预构建镜像 | 使用上游版本，不会包含本 Fork 的修改 |
 
-```bash
-goreleaser build --snapshot --single-target --clean
-```
+两套部署方式**不要在同一目录混用**。原版安装文档见 [Dujiao-Next 官网](https://dujiao-next.com/deploy/)。
 
-This builds both frontends, embeds them, and compiles with `-tags fullstack` — the same path
-CI uses for releases. The manual equivalent:
+## 📄 上游项目与许可证
 
-```bash
-(cd frontend/admin && pnpm run build:fullstack)   # injects the <base> placeholder
-(cd frontend/user  && pnpm run build)
-rm -rf internal/web/dist && mkdir -p internal/web/dist
-cp -r frontend/admin/dist internal/web/dist/admin
-cp -r frontend/user/dist  internal/web/dist/user
-go build -tags release,fullstack -o dujiao-next ./cmd/server
-```
+本项目基于开源仓库 [dujiao-next/dujiao-next](https://github.com/dujiao-next/dujiao-next) 进行二次开发，感谢上游维护者与贡献者。项目以仓库 [LICENSE](LICENSE) 所示的 **GNU GPL v3** 许可条款发布；再分发、修改和商用时请遵守相关开源许可义务。
 
-Note that admin uses `build:fullstack`, not `build`. Plain `build` produces a bundle pinned to
-`/`, which silently breaks a custom `web.admin_path`.
-
-## Testing
-
-```bash
-go test ./...                              # full suite
-go test ./internal/architecture/...        # dependency and layering guards
-go test ./internal/modules/order/...       # one module
-
-cd frontend/user  && pnpm run build        # includes vue-tsc type checking
-cd frontend/admin && pnpm run build
-```
-
-Health check endpoint: `GET /health`
-
-## Notes on Data Access
-
-SQLite runs with `MaxOpenConns=1`. A store opens a transaction through
-`WithinTransaction(func(tx contract.Transaction) error)`, and every query inside the closure
-must go through that `tx` handle or a store bound to it via `WithTx(tx)`. Reaching for the
-global DB handle instead asks for a second connection that will never be granted, deadlocking
-the process — including indirectly, by calling a service that queries on its own. Read any
-settings you need *before* opening the transaction, and keep outbound HTTP calls (payment
-gateways and the like) outside it.
-
-## Online Documentation
-
-- https://dujiao-next.com
+发现问题可在本 Fork 的 [Issues](https://github.com/slobys/dujiao-next/issues) 提交，建议附上版本/提交号、相关日志（请脱敏）及复现步骤。
