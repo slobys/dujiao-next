@@ -615,6 +615,7 @@ export const adminAPI = {
   listAiAudit: () => api.get('/admin/ai-access/audit', { params: { limit: 50 } }),
   getAiRemote: () => api.get('/admin/ai-access/remote'),
   updateAiRemote: (data: { enabled: boolean; public_origin: string }) => api.put('/admin/ai-access/remote', data),
+  updateAiControl: (data: { master_enabled: boolean; website_write_enabled: boolean }) => api.put('/admin/ai-access/control', data),
   getAiOAuthRequest: (id: string) => api.get(`/admin/ai-access/oauth/requests/${encodeURIComponent(id)}`),
   approveAiOAuth: (data: { request_id: string; scopes: string[] }) => api.post('/admin/ai-access/oauth/approve', data),
   denyAiOAuth: (id: string) => api.post('/admin/ai-access/oauth/deny', { request_id: id }),

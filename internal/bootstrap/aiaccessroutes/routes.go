@@ -29,6 +29,19 @@ func Register(api *gin.RouterGroup, services *container.Container) {
 		return
 	}
 	group := api.Group("/ai")
+	// The emergency master switch covers the legacy machine-key REST API,
+	// not only the newer OAuth MCP interface.
+	group.Use(func(c *gin.Context) {
+		if services.AiRemoteService == nil {
+			c.AbortWithStatus(http.StatusForbidden)
+			return
+		}
+		if _, err := services.AiRemoteService.MasterActive(c.Request.Context()); err != nil {
+			c.AbortWithStatus(http.StatusForbidden)
+			return
+		}
+		c.Next()
+	})
 	guard := func(scope, route string) gin.HandlerFunc {
 		return aiaccesshttp.MachineMiddleware(services.AiAccessService, scope, route)
 	}

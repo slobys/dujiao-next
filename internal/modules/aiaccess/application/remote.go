@@ -121,12 +121,61 @@ func (s *RemoteService) SetConfig(ctx context.Context, enabled bool, raw string)
 	}
 	return s.repo.GetRemote(ctx)
 }
+
+// System-admin-only operation; no MCP tool may enable itself.
+func (s *RemoteService) SetControl(ctx context.Context, master, websiteWrite bool, adminID uint) (*domain.RemoteConfig, error) {
+	if adminID == 0 || (websiteWrite && !master) {
+		return nil, ErrInvalid
+	}
+	if websiteWrite {
+		cfg, err := s.GetConfig(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if !cfg.Enabled || cfg.PublicOrigin == "" {
+			return nil, ErrInvalid
+		}
+		if _, err = HTTPSOrigin(cfg.PublicOrigin); err != nil {
+			return nil, ErrInvalid
+		}
+	}
+	audit := &domain.Audit{ActorAdminID: adminID, Action: "ai_control_update"}
+	if err := s.repo.SaveControl(ctx, master, websiteWrite, audit); err != nil {
+		return nil, err
+	}
+	return s.GetConfig(ctx)
+}
+
+// Kill switch for the legacy /api/v1/ai read-only endpoint, too.
+func (s *RemoteService) MasterActive(ctx context.Context) (*domain.RemoteConfig, error) {
+	cfg, err := s.GetConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !cfg.MasterEnabled {
+		return nil, ErrRemoteDisabled
+	}
+	return cfg, nil
+}
+
+// Website writes require three opt-ins: master, HTTPS MCP and site edit mode.
+func (s *RemoteService) WebsiteWriteActive(ctx context.Context) (*domain.RemoteConfig, error) {
+	cfg, err := s.Active(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !cfg.WebsiteWriteEnabled {
+		return nil, ErrRemoteDisabled
+	}
+	return cfg, nil
+}
+
 func (s *RemoteService) Active(ctx context.Context) (*domain.RemoteConfig, error) {
 	cfg, err := s.GetConfig(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if !cfg.Enabled || cfg.PublicOrigin == "" {
+	if !cfg.MasterEnabled || !cfg.Enabled || cfg.PublicOrigin == "" {
 		return nil, ErrRemoteDisabled
 	}
 	if _, err = HTTPSOrigin(cfg.PublicOrigin); err != nil {
@@ -149,7 +198,7 @@ func hashOpaque(raw string) string {
 // The client may request the full supported list, but the consent UI must
 // default all write/request scopes to unchecked; scope grants are user-controlled.
 func DefaultOAuthScopes() []string {
-	return []string{ScopeCatalog, ScopeInventory, ScopeReport, ScopeDraftWrite, ScopePublishRequest, ScopeOrdersRead, ScopeOrderReviewRequest, ScopeOrderCancelRequest, ScopeWalletRefundRequest}
+	return []string{ScopeCatalog, ScopeInventory, ScopeReport, ScopeDraftWrite, ScopePublishRequest, ScopeOrdersRead, ScopeOrderReviewRequest, ScopeOrderCancelRequest, ScopeWalletRefundRequest, ScopeSiteContentRead, ScopeSiteContentWrite}
 }
 func oauthScopes(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)

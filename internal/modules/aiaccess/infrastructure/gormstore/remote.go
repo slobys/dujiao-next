@@ -31,9 +31,53 @@ func (s *Store) SaveRemote(ctx context.Context, config *domain.RemoteConfig) err
 		if err != nil {
 			return err
 		}
-		return tx.Model(&domain.RemoteConfig{}).Where("id = ?", 1).Updates(map[string]any{
-			"enabled": config.Enabled, "public_origin": config.PublicOrigin, "updated_at": time.Now().UTC(),
-		}).Error
+		updates := map[string]any{"enabled": config.Enabled, "public_origin": config.PublicOrigin, "updated_at": time.Now().UTC()}
+		// Switching off HTTPS MCP also disarms its independent write mode.
+		if !config.Enabled {
+			updates["website_write_enabled"] = false
+		}
+		return tx.Model(&domain.RemoteConfig{}).Where("id = ?", 1).Updates(updates).Error
+	})
+}
+
+// SaveControl is an independent system-admin operation. The AI protocol has
+// no tool or OAuth scope allowing it to call this method.
+func (s *Store) SaveControl(ctx context.Context, master, write bool, audit *domain.Audit) error {
+	if audit == nil || audit.ActorAdminID == 0 {
+		return errors.New("system administrator required")
+	}
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var settings domain.RemoteConfig
+		err := tx.First(&settings, 1).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			settings = domain.RemoteConfig{ID: 1}
+			if err = tx.Create(&settings).Error; err != nil {
+				return err
+			}
+		} else if err != nil {
+			return err
+		}
+		if write && (!master || !settings.Enabled || settings.PublicOrigin == "") {
+			return errors.New("remote HTTPS MCP must be configured and master AI enabled before website writing")
+		}
+		if !master {
+			write = false
+		}
+		audit.KeyID = "ai-system"
+		audit.Route = "admin/ai-control"
+		audit.Result = "master_off"
+		if master {
+			audit.Result = "master_on"
+		}
+		if write {
+			audit.Result = "website_write_on"
+		}
+		audit.CreatedAt = time.Now().UTC()
+		if err := tx.Model(&domain.RemoteConfig{}).Where("id = 1").
+			Updates(map[string]any{"master_enabled": master, "website_write_enabled": write, "updated_at": audit.CreatedAt}).Error; err != nil {
+			return err
+		}
+		return tx.Create(audit).Error
 	})
 }
 func (s *Store) RegisterClient(ctx context.Context, c *domain.OAuthClient) error {

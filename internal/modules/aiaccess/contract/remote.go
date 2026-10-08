@@ -12,6 +12,7 @@ import (
 type RemoteRepository interface {
 	GetRemote(context.Context) (*domain.RemoteConfig, error)
 	SaveRemote(context.Context, *domain.RemoteConfig) error
+	SaveControl(context.Context, bool, bool, *domain.Audit) error
 	RegisterClient(context.Context, *domain.OAuthClient) error
 	FindClient(context.Context, string) (*domain.OAuthClient, error)
 	CreateAuthorization(context.Context, *domain.AuthorizationRequest) error

@@ -51,6 +51,9 @@ func TestRemoteDisabledByDefaultAndStrictOrigin(t *testing.T) {
 		}
 	}
 	cfg, err = remote.SetConfig(ctx, true, "https://shop.example.com")
+	if err == nil {
+		_, err = remote.SetControl(ctx, true, false, 1)
+	}
 	if err != nil || !cfg.Enabled || cfg.PublicOrigin != "https://shop.example.com" {
 		t.Fatalf("enable: %+v %v", cfg, err)
 	}
@@ -69,6 +72,9 @@ func TestOAuthBrowserPKCELifecycleAndRefresh(t *testing.T) {
 	_, keys, remote := remoteFixture(t)
 	ctx := context.Background()
 	if _, err := remote.SetConfig(ctx, true, "https://shop.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := remote.SetControl(ctx, true, false, 1); err != nil {
 		t.Fatal(err)
 	}
 	for _, bad := range []string{"http://evil.example/callback", "javascript:alert(1)", "file:///etc/passwd", "https://user:pw@bad.example/callback", "http://0.0.0.0:3333/cb"} {
@@ -207,6 +213,9 @@ func TestRemoteTransportFailsClosedAndMetadata(t *testing.T) {
 	if _, err := remote.SetConfig(ctx, true, "https://shop.example.com"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := remote.SetControl(ctx, true, false, 1); err != nil {
+		t.Fatal(err)
+	}
 	badHost := makeRequest("GET", "/.well-known/oauth-authorization-server", "attacker.example", "https", "127.0.0.1:8123", "")
 	if badHost.Code != 421 {
 		t.Fatalf("untrusted Host=%d", badHost.Code)
@@ -260,6 +269,9 @@ func TestOAuthDenialReturnsErrorAndCannotRedeem(t *testing.T) {
 	if _, err := remote.SetConfig(ctx, true, "https://shop.example.com"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := remote.SetControl(ctx, true, false, 1); err != nil {
+		t.Fatal(err)
+	}
 	client, err := remote.RegisterClient(ctx, "Claude Code", []string{"http://127.0.0.1:3145/callback"})
 	if err != nil {
 		t.Fatal(err)
@@ -298,6 +310,9 @@ func TestOAuthDatabaseRejectsDoubleApprovalAndCodeReuse(t *testing.T) {
 	if _, err := remote.SetConfig(ctx, true, "https://shop.example.com"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := remote.SetControl(ctx, true, false, 1); err != nil {
+		t.Fatal(err)
+	}
 	client, err := remote.RegisterClient(ctx, "OpenClaw", []string{"http://localhost:6123/callback"})
 	if err != nil {
 		t.Fatal(err)
@@ -321,5 +336,114 @@ func TestOAuthDatabaseRejectsDoubleApprovalAndCodeReuse(t *testing.T) {
 	}
 	if row.ApprovedAt == nil || row.CodeHash == "" || row.RedeemedAt != nil {
 		t.Fatal("pending authorization state incorrect")
+	}
+}
+
+func TestAIMasterSwitchLifecycleAndAudit(t *testing.T) {
+	db, keys, remote := remoteFixture(t)
+	ctx := context.Background()
+	cfg, err := remote.GetConfig(ctx)
+	if err != nil || cfg.MasterEnabled || cfg.WebsiteWriteEnabled {
+		t.Fatalf("new installs must default OFF %+v %v", cfg, err)
+	}
+	if _, err = remote.SetConfig(ctx, true, "https://shop.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = remote.Active(ctx); !errors.Is(err, app.ErrRemoteDisabled) {
+		t.Fatal("setting MCP host unexpectedly enabled AI")
+	}
+	if _, err = remote.SetControl(ctx, true, true, 0); err == nil {
+		t.Fatal("non-admin enabled website editing")
+	}
+	if _, err = remote.SetControl(ctx, false, true, 1); err == nil {
+		t.Fatal("editing enabled under paused AI")
+	}
+	if _, err = remote.SetControl(ctx, true, false, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = remote.Active(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = remote.WebsiteWriteActive(ctx); !errors.Is(err, app.ErrRemoteDisabled) {
+		t.Fatal("website editing enabled without opt in")
+	}
+	if _, err = remote.SetControl(ctx, true, true, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = remote.WebsiteWriteActive(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = remote.SetControl(ctx, false, false, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = remote.MasterActive(ctx); !errors.Is(err, app.ErrRemoteDisabled) {
+		t.Fatal("AI still active after emergency OFF")
+	}
+	if _, err = remote.Active(ctx); !errors.Is(err, app.ErrRemoteDisabled) {
+		t.Fatal("remote MCP still active")
+	}
+	cfg, err = remote.GetConfig(ctx)
+	if err != nil || cfg.WebsiteWriteEnabled || cfg.MasterEnabled {
+		t.Fatalf("pause didn't clear website editing %+v", cfg)
+	}
+	if _, err = remote.SetControl(ctx, true, false, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = remote.WebsiteWriteActive(ctx); err == nil {
+		t.Fatal("website write reenabled without explicit opt-in")
+	}
+	if _, err = remote.SetControl(ctx, true, true, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = remote.SetConfig(ctx, false, "https://shop.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = remote.SetConfig(ctx, true, "https://shop.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = remote.WebsiteWriteActive(ctx); err == nil {
+		t.Fatal("turning MCP back on reenabled site editing without consent")
+	}
+	entries, err := keys.Audits(ctx, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modeEvents := 0
+	for _, entry := range entries {
+		if entry.Action == "ai_control_update" {
+			modeEvents++
+			if entry.ActorAdminID != 1 || entry.KeyID != "ai-system" {
+				t.Fatal("bad control audit")
+			}
+		}
+	}
+	if modeEvents != 5 {
+		t.Fatalf("expected five human mode changes, got %d", modeEvents)
+	}
+	var rows int64
+	if err = db.Model(&domain.RemoteConfig{}).Count(&rows).Error; err != nil || rows != 1 {
+		t.Fatalf("singleton settings lost: %d %v", rows, err)
+	}
+}
+func TestAIMasterSwitchFailsClosedWhenAuditUnavailable(t *testing.T) {
+	db, _, remote := remoteFixture(t)
+	ctx := context.Background()
+	if _, err := remote.SetConfig(ctx, true, "https://shop.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	err := db.Callback().Create().Before("gorm:create").Register("reject_ai_control_audit", func(tx *gorm.DB) {
+		if tx.Statement.Schema != nil && tx.Statement.Schema.Table == "ai_access_audit_logs" {
+			tx.AddError(errors.New("audit unavailable"))
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Callback().Create().Remove("reject_ai_control_audit")
+	if _, err = remote.SetControl(ctx, true, false, 1); err == nil {
+		t.Fatal("master was enabled without audit")
+	}
+	if _, err = remote.MasterActive(ctx); !errors.Is(err, app.ErrRemoteDisabled) {
+		t.Fatal("control update wasn't rolled back")
 	}
 }

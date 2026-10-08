@@ -5,10 +5,12 @@ import "time"
 // RemoteConfig defaults to disabled when its singleton row does not exist.
 // PublicOrigin must be a validated https://host origin with no path.
 type RemoteConfig struct {
-	ID           uint      `gorm:"primaryKey" json:"-"`
-	Enabled      bool      `gorm:"not null;default:false" json:"enabled"`
-	PublicOrigin string    `gorm:"type:varchar(253);not null;default:''" json:"public_origin"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID                  uint      `gorm:"primaryKey" json:"-"`
+	Enabled             bool      `gorm:"not null;default:false" json:"enabled"`
+	MasterEnabled       bool      `gorm:"not null;default:false" json:"master_enabled"`
+	WebsiteWriteEnabled bool      `gorm:"not null;default:false" json:"website_write_enabled"`
+	PublicOrigin        string    `gorm:"type:varchar(253);not null;default:''" json:"public_origin"`
+	UpdatedAt           time.Time `json:"updated_at"`
 }
 
 func (RemoteConfig) TableName() string { return "ai_mcp_settings" }
@@ -30,7 +32,7 @@ type AuthorizationRequest struct {
 	ID            string     `gorm:"primaryKey;type:varchar(64)" json:"id"`
 	ClientID      string     `gorm:"type:varchar(42);not null;index" json:"client_id"`
 	RedirectURI   string     `gorm:"type:varchar(2048);not null" json:"redirect_uri"`
-	Scopes        string     `gorm:"type:varchar(128);not null" json:"scopes"`
+	Scopes        string     `gorm:"type:varchar(512);not null" json:"scopes"`
 	State         string     `gorm:"type:varchar(512)" json:"-"`
 	CodeChallenge string     `gorm:"type:varchar(128);not null" json:"-"`
 	Resource      string     `gorm:"type:varchar(300);not null" json:"-"`

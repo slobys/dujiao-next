@@ -14,6 +14,7 @@ import (
 	aiapp "github.com/dujiao-next/internal/modules/aiaccess/application"
 	aidomain "github.com/dujiao-next/internal/modules/aiaccess/domain"
 	productwrite "github.com/dujiao-next/internal/modules/catalog/product/application/write"
+	contentapp "github.com/dujiao-next/internal/modules/content/application"
 	orderapp "github.com/dujiao-next/internal/modules/order/application"
 	refundapp "github.com/dujiao-next/internal/modules/order/application/refund"
 	ordercontract "github.com/dujiao-next/internal/modules/order/contract"
@@ -474,4 +475,184 @@ func (h *Handler) registerWalletRefundTools(server *mcp.Server, key *aidomain.Ke
 			"refund_target": "wallet_only", "original_payment_gateway_refunded": false,
 		}, nil
 	})
+}
+
+type SiteListRequest struct {
+	Type     string `json:"type,omitempty"`
+	Page     int    `json:"page,omitempty"`
+	PageSize int    `json:"page_size,omitempty"`
+}
+type SiteContentDraft struct {
+	Type    string `json:"type"`
+	Slug    string `json:"slug"`
+	Title   string `json:"title"`
+	Summary string `json:"summary,omitempty"`
+	Content string `json:"content"`
+}
+type SiteBannerDraft struct {
+	Name     string `json:"name"`
+	Title    string `json:"title"`
+	Subtitle string `json:"subtitle,omitempty"`
+	Image    string `json:"image"`
+}
+
+func validSiteList(in SiteListRequest) bool {
+	return (in.Type == "" || in.Type == constants.PostTypeBlog || in.Type == constants.PostTypeNotice) &&
+		in.Page >= 1 && in.Page <= 10000 && in.PageSize >= 1 && in.PageSize <= 30
+}
+func safeSiteContent(text string, minimum, maximum int) bool {
+	if len(text) < minimum || len(text) > maximum || !utf8.ValidString(text) {
+		return false
+	}
+	if strings.ContainsAny(text, "<>") {
+		return false
+	}
+	lower := strings.ToLower(text)
+	if strings.Contains(lower, "javascript:") || strings.Contains(lower, "data:") || strings.Contains(lower, "file:") {
+		return false
+	}
+	for _, r := range text {
+		if r < 32 && r != '\n' && r != '\t' {
+			return false
+		}
+	}
+	return true
+}
+func safeSiteImage(path string) bool {
+	if len(path) < 12 || len(path) > 500 || !strings.HasPrefix(path, "/uploads/") ||
+		strings.Contains(path, "..") || strings.ContainsAny(path, "?#%\\\\<>") {
+		return false
+	}
+	// A product/banner may reference an already-uploaded image, never cause
+	// the AI to fetch a user-controlled external URL or execute a command.
+	for _, r := range path {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '/' || r == '.') {
+			return false
+		}
+	}
+	suffix := strings.ToLower(path)
+	return strings.HasSuffix(suffix, ".png") || strings.HasSuffix(suffix, ".jpg") ||
+		strings.HasSuffix(suffix, ".jpeg") || strings.HasSuffix(suffix, ".webp")
+}
+func (h *Handler) registerSiteContentTools(server *mcp.Server, key *aidomain.Key, check scopeCheck) {
+	if aiapp.HasScope(key.Scopes, aiapp.ScopeSiteContentRead) {
+		mcp.AddTool(server, &mcp.Tool{Name: "list_website_articles", Description: "Read-only, sanitized list of published and draft website blog posts and notices, no customer data."},
+			func(ctx context.Context, _ *mcp.CallToolRequest, in SiteListRequest) (*mcp.CallToolResult, map[string]any, error) {
+				if err := check(ctx, aiapp.ScopeSiteContentRead, "list_website_articles"); err != nil {
+					return nil, nil, err
+				}
+				if in.Page == 0 {
+					in.Page = 1
+				}
+				if in.PageSize == 0 {
+					in.PageSize = 20
+				}
+				if !validSiteList(in) {
+					return nil, nil, errors.New("invalid content listing request")
+				}
+				rows, total, err := h.services.ContentPostService.ListAdmin(ctx, contentapp.AdminPostQuery{
+					Type: in.Type, Page: in.Page, PageSize: in.PageSize,
+				})
+				if err != nil {
+					return nil, nil, errors.New("website content unavailable")
+				}
+				out := make([]map[string]any, 0, len(rows))
+				for _, v := range rows {
+					out = append(out, map[string]any{"id": v.ID, "type": v.Type, "slug": v.Slug,
+						"title": v.TitleJSON, "summary": v.SummaryJSON, "is_published": v.IsPublished,
+						"created_at": v.CreatedAt})
+				}
+				return nil, map[string]any{"articles": out, "count": total}, nil
+			})
+		mcp.AddTool(server, &mcp.Tool{Name: "list_website_banners", Description: "Read-only sanitized homepage banner configuration; never changes images or publication state."},
+			func(ctx context.Context, _ *mcp.CallToolRequest, in SiteListRequest) (*mcp.CallToolResult, map[string]any, error) {
+				if err := check(ctx, aiapp.ScopeSiteContentRead, "list_website_banners"); err != nil {
+					return nil, nil, err
+				}
+				if in.Page == 0 {
+					in.Page = 1
+				}
+				if in.PageSize == 0 {
+					in.PageSize = 20
+				}
+				if in.Type != "" || !validSiteList(in) {
+					return nil, nil, errors.New("invalid banner listing request")
+				}
+				rows, total, err := h.services.ContentBannerService.ListAdmin(ctx, contentapp.AdminBannerQuery{
+					Page: in.Page, PageSize: in.PageSize,
+				})
+				if err != nil {
+					return nil, nil, errors.New("banners unavailable")
+				}
+				out := make([]map[string]any, 0, len(rows))
+				for _, v := range rows {
+					out = append(out, map[string]any{"id": v.ID, "name": v.Name, "position": v.Position,
+						"title": v.TitleJSON, "subtitle": v.SubtitleJSON, "image": v.Image,
+						"is_active": v.IsActive, "sort_order": v.SortOrder})
+				}
+				return nil, map[string]any{"banners": out, "count": total}, nil
+			})
+	}
+	if !aiapp.HasScope(key.Scopes, aiapp.ScopeSiteContentWrite) {
+		return
+	}
+	mcp.AddTool(server, &mcp.Tool{Name: "create_website_article_draft",
+		Description: "Creates a REAL unpublished blog/notice draft using the site's native content application service. Cannot publish, edit existing published posts, upload files or execute code."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in SiteContentDraft) (*mcp.CallToolResult, map[string]any, error) {
+			if err := check(ctx, aiapp.ScopeSiteContentWrite, "create_website_article_draft"); err != nil {
+				return nil, nil, err
+			}
+			if in.Type != constants.PostTypeBlog && in.Type != constants.PostTypeNotice {
+				return nil, nil, errors.New("unsupported post type")
+			}
+			if !draftSlugPattern.MatchString(in.Slug) || !safeSiteContent(in.Title, 1, 150) ||
+				!safeSiteContent(in.Content, 1, 15000) || (in.Summary != "" && !safeSiteContent(in.Summary, 1, 400)) {
+				return nil, nil, errors.New("invalid draft content")
+			}
+			disabled := false
+			post, err := h.services.ContentPostService.Create(ctx, contentapp.CreatePostInput{
+				Slug: in.Slug, Type: in.Type,
+				TitleJSON:   map[string]interface{}{"zh-CN": in.Title},
+				SummaryJSON: map[string]interface{}{"zh-CN": in.Summary},
+				ContentJSON: map[string]interface{}{"zh-CN": in.Content},
+				IsPublished: &disabled,
+			})
+			if err != nil {
+				return nil, nil, errors.New("could not create post draft; slug may exist")
+			}
+			if post == nil || post.IsPublished {
+				return nil, nil, errors.New("content publishing safety check failed")
+			}
+			return nil, map[string]any{"created": true, "draft_id": post.ID,
+				"slug": post.Slug, "type": post.Type, "is_published": false,
+				"next_step": "A human administrator must review and publish this article in the existing site content editor"}, nil
+		})
+	mcp.AddTool(server, &mcp.Tool{Name: "create_disabled_home_banner",
+		Description: "Creates a REAL homepage banner draft but forces is_active=false, link_type=none; image must be a local /uploads/... reference (format checked, existence not checked). Does not alter the live homepage."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in SiteBannerDraft) (*mcp.CallToolResult, map[string]any, error) {
+			if err := check(ctx, aiapp.ScopeSiteContentWrite, "create_disabled_home_banner"); err != nil {
+				return nil, nil, err
+			}
+			if !safeSiteContent(in.Name, 1, 120) || !safeSiteContent(in.Title, 1, 150) ||
+				(in.Subtitle != "" && !safeSiteContent(in.Subtitle, 1, 400)) || !safeSiteImage(in.Image) {
+				return nil, nil, errors.New("invalid banner input or image reference")
+			}
+			disabled := false
+			banner, err := h.services.ContentBannerService.Create(ctx, contentapp.BannerInput{
+				Name: in.Name, TitleJSON: map[string]interface{}{"zh-CN": in.Title},
+				SubtitleJSON: map[string]interface{}{"zh-CN": in.Subtitle},
+				Position:     constants.BannerPositionHomeHero,
+				Image:        in.Image, IsActive: &disabled,
+				LinkType: constants.BannerLinkTypeNone,
+			})
+			if err != nil {
+				return nil, nil, errors.New("could not create banner draft")
+			}
+			if banner == nil || banner.IsActive {
+				return nil, nil, errors.New("banner activation safety check failed")
+			}
+			return nil, map[string]any{"created": true, "banner_id": banner.ID,
+				"image": banner.Image, "is_active": false,
+				"next_step": "A human administrator may preview and activate the banner in the site admin"}, nil
+		})
 }

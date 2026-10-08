@@ -51,6 +51,9 @@ func testHandler(t *testing.T) (*container.Container, *aidomain.Key, *orderGette
 	if _, err = remote.SetConfig(context.Background(), true, "https://shop.example.com"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := remote.SetControl(context.Background(), true, false, 1); err != nil {
+		t.Fatal(err)
+	}
 	reviews := aiapp.NewOrderReviews(store)
 	key, _, err := keys.Create(context.Background(), "Operator", []string{aiapp.ScopeOrderReviewRequest}, 30, 1)
 	if err != nil {
@@ -64,7 +67,7 @@ func testHandler(t *testing.T) (*container.Container, *aidomain.Key, *orderGette
 		GuestEmail: "SENSITIVE@example.test",
 	}}
 	return &container.Container{
-		AiAccessService: keys, AiRemoteService: remote, AiOrderReviewService: reviews, AiOrderCancellationService:aiapp.NewOrderCancellations(store),AiWalletRefundService:aiapp.NewWalletRefunds(store),OrderStore: order,
+		AiAccessService: keys, AiRemoteService: remote, AiOrderReviewService: reviews, AiOrderCancellationService: aiapp.NewOrderCancellations(store), AiWalletRefundService: aiapp.NewWalletRefunds(store), OrderStore: order,
 	}, key, order, reviews
 }
 func orderRequest(t *testing.T, c *container.Container, path string, method string, admin bool) *httptest.ResponseRecorder {

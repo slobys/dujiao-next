@@ -11,7 +11,7 @@ type Key struct {
 	TokenHash     string     `gorm:"type:char(64);not null" json:"-"`
 	Audience      string     `gorm:"type:varchar(300);not null;default:''" json:"-"`
 	OAuthClientID string     `gorm:"column:oauth_client_id;type:varchar(42);not null;default:''" json:"-"`
-	Scopes        string     `gorm:"type:varchar(128);not null" json:"-"`
+	Scopes        string     `gorm:"type:varchar(512);not null" json:"-"`
 	CreatedBy     uint       `gorm:"not null;index" json:"created_by"`
 	ExpiresAt     time.Time  `gorm:"not null;index" json:"expires_at"`
 	RevokedAt     *time.Time `gorm:"index" json:"revoked_at"`

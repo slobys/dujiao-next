@@ -2,13 +2,35 @@
 
 提供统一的 AI 接入方式：**推荐直接使用 Go 商城内置的、浏览器 OAuth 授权的远程 MCP**，无需 NAS 上的本地 Python/SSH 转发；同时保留使用 [MCP 官方 Python SDK](https://github.com/modelcontextprotocol/python-sdk) 的老版本地 stdio MCP 以兼容离线和内网场景。独立 AI 身份与管理员登录完全隔离，不会因为 MCP 连接而获得商城管理员 JWT。
 
+## AI 总控 5.0：一键开启／暂停网站 AI 管家
+
+**升级后 AI 总开关默认关闭。** 后台 **系统设置 → AI 接入管理** 中新增三个独立控制：
+
+1. **AI 管家总开关**（`master_enabled`）：控制所有商城明确暴露的 AI 接口，包括新 `/mcp`、OAuth、旧版机器 Key `/api/v1/ai/*`。关闭后新 AI 调用被拒绝，但人类管理员、访客和支付回调正常工作。已有 MCP 会话也无法继续调用；已经开始执行的操作可能完成，已发生的变更不会自动回滚。
+2. **远程 MCP**（`enabled`）：填写真实 HTTPS 根域名并保存。仅开远程 MCP 不等于启动 AI 总开关。关闭远程 MCP 时还会自动清除网站编辑授权。
+3. **网站内容编辑**（`website_write_enabled`）：只能在总开关和远程 MCP 都开启时使用。关闭它仅暂停网站内容写入，不阻断其他已经按 Scope 授权的 AI 查询与业务申请。重新启用网站编辑需要你再次确认。
+
+以上总开关只由**有权的系统管理员**操作，数据库内保存状态并写入不包含密钥的变更审计；AI 本身没有开启或关闭它的 MCP 工具。暂停后原密钥只是暂时不能使用，重新开启时有效期内的旧密钥可能恢复；如需彻底断开，请撤销凭证。**直接交给其他 AI 的管理员 JWT、SSH/Root、GitHub 写权限并不是商城的 AI 专用入口，不受此总开关控制，应分别关闭或撤销。**
+
+### 本次新增的真实网站内容管理能力
+
+| 权限（OAuth 授权时默认不勾选） | 工具 | 能力 |
+| --- | --- | --- |
+| `site:content:read` | `list_website_articles`、`list_website_banners` | 查询网站文章、公告及首页 Banner 配置，不修改内容 |
+| `site:content:write` | `create_website_article_draft`、`create_disabled_home_banner` | 创建**未发布**的公告/博客草稿，以及**停用**的首页 Banner 草稿 |
+
+网站写入必须同时满足：总开关 ON、远程 MCP ON、网站编辑 ON、AI OAuth 授权含 `site:content:write`。文章由现有内容应用服务写入，强制 `is_published=false`；首页 Banner 由现有 Banner 服务创建，强制 `is_active=false`、`link_type=none`。文本拒绝 HTML 标签/危险控制字符；Banner 图片只接受本地 `/uploads/...` 路径（校验路径格式，但**不验证文件实际存在**）。AI 不会自动上线、不允许任意 JavaScript/SQL/Shell，也无法自发开启权限。
+
+用法示例：让 AI 创建一篇新公告的未发布草稿、引用已有图片创建停用 Banner，然后由你在商城后台审核、调整并最终上线。
+
+**注意：这里的“全站 AI 管理”仍是逐阶段扩展，并非已经可以操作后台每个按钮。** 此前交付商品草稿及上架人工审批、订单脱敏查询/售后、严格未付款取消和人工批准钱包退款；本批交付跨入口总开关与网站内容草稿。后续网站页面布局、已有内容编辑和部署审批仍需逐项接入，不建议给模型一个不受限的管理员 JWT/Root 接口。
 ## AI 接入中心 2.0：浏览器授权连接远程 MCP
 
 **推荐新方案：** 不必在 NAS/Windows 安装或运行本目录的 Python 服务。商城在 **同一 Go 进程**内提供官方 SDK 的远程无状态 Streamable HTTP `/mcp`；它**默认关闭**，仅系统管理员可在后台开启，必须填写真实、可信的 HTTPS 根域名。
 
 升级已经部署的 Fork 时，先在 Vultr 通过 `sudo dujiao-fork backup` 备份并核验备份，再执行 `sudo dujiao-fork update` **构建包含新 Go 后端和 Vue 管理后台的镜像**；仅执行 `git pull` 不会更新正在运行的镜像。请先使用安装器菜单 9 完成域名 HTTPS，并将旧的公开 `18080` HTTP 入口改成仅本机访问，限制 Vultr 防火墙来源；不要从浏览器公开传输管理员密码。
 
-升级后打开商城**系统设置 → AI 接入管理 → 远程 MCP**，检查填写的真实站点 HTTPS 根域名（例如 `https://shop.example.com`），打开开关并保存。面板会自动显示当前真实域名对应的 `/mcp` 地址，并提供 Codex / Claude Code / OpenClaw 的**复制配置**功能。保存前以及关闭时不会生成可用连接命令。
+升级后先在 **AI 接入管理**明确打开上述 **AI 总开关**，再打开商城**系统设置 → AI 接入管理 → 远程 MCP**，检查填写的真实站点 HTTPS 根域名（例如 `https://shop.example.com`），打开开关并保存。面板会自动显示当前真实域名对应的 `/mcp` 地址，并提供 Codex / Claude Code / OpenClaw 的**复制配置**功能。保存前以及关闭时不会生成可用连接命令。
 
 在需要连接的设备上，只运行对应的客户端命令，无需配 NAS Python、SSH、JWT：
 

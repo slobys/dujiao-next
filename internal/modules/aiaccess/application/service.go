@@ -29,6 +29,8 @@ const (
 	ScopeOrderReviewRequest  = "orders:review:request"
 	ScopeOrderCancelRequest  = "orders:cancel:request"
 	ScopeWalletRefundRequest = "orders:wallet-refund:request"
+	ScopeSiteContentRead     = "site:content:read"
+	ScopeSiteContentWrite    = "site:content:write"
 )
 
 var (
@@ -36,7 +38,7 @@ var (
 	ErrNotFound      = errors.New("AI credential not found")
 	ErrNotAuthorized = errors.New("AI credential invalid, revoked, expired or missing scope")
 	keyPattern       = regexp.MustCompile(`^djai_([0-9a-f]{16})_([0-9a-f]{64})$`)
-	permitted        = map[string]bool{ScopeCatalog: true, ScopeInventory: true, ScopeReport: true, ScopeDraftWrite: true, ScopePublishRequest: true, ScopeOrdersRead: true, ScopeOrderReviewRequest: true, ScopeOrderCancelRequest: true, ScopeWalletRefundRequest: true}
+	permitted        = map[string]bool{ScopeCatalog: true, ScopeInventory: true, ScopeReport: true, ScopeDraftWrite: true, ScopePublishRequest: true, ScopeOrdersRead: true, ScopeOrderReviewRequest: true, ScopeOrderCancelRequest: true, ScopeWalletRefundRequest: true, ScopeSiteContentRead: true, ScopeSiteContentWrite: true}
 )
 
 type Service struct {

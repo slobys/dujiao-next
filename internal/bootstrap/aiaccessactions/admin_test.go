@@ -64,6 +64,9 @@ func actionHTTPFixture(t *testing.T) (*container.Container, *app.Actions, *domai
 	if _, err := remote.SetConfig(context.Background(), true, "https://shop.example.com"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := remote.SetControl(context.Background(), true, false, 1); err != nil {
+		t.Fatal(err)
+	}
 	key, _, err := keys.Create(context.Background(), "Codex", []string{app.ScopePublishRequest}, 5, 1)
 	if err != nil {
 		t.Fatal(err)

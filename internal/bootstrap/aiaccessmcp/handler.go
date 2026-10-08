@@ -112,6 +112,16 @@ type Draft struct {
 func (h *Handler) makeServer(key *aidomain.Key, token, resource string) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "dujiao-next", Version: "3.0.0"}, nil)
 	check := func(ctx context.Context, scope, tool string) error {
+		// Recheck the persisted master switch for every tool invocation,
+		// including MCP sessions opened before a human paused AI access.
+		if _, err := h.services.AiRemoteService.Active(ctx); err != nil {
+			return errors.New("AI master switch is OFF")
+		}
+		if scope == aiapp.ScopeSiteContentWrite {
+			if _, err := h.services.AiRemoteService.WebsiteWriteActive(ctx); err != nil {
+				return errors.New("AI website editing is switched OFF")
+			}
+		}
 		current, err := h.services.AiAccessService.AuthenticateMCP(ctx, token, resource)
 		if err != nil || !aiapp.HasScope(current.Scopes, scope) {
 			return errors.New("MCP permission denied or credential expired")
@@ -278,5 +288,6 @@ func (h *Handler) makeServer(key *aidomain.Key, token, resource string) *mcp.Ser
 	h.registerWriteTools(server, key, check)
 	h.registerOrderTools(server, key, check)
 	h.registerWalletRefundTools(server, key, check)
+	h.registerSiteContentTools(server, key, check)
 	return server
 }

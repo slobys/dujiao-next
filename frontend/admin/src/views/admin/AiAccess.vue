@@ -35,6 +35,10 @@ const translations = {
     remoteTitle: '远程 MCP · 一键连接', remoteInfo: '通过商城 HTTPS 直接连接 AI，无需 NAS Python 或 SSH。浏览器登录后选择只读、建草稿及上架申请权限；写入权限默认关闭。',
     originLabel: '商城 HTTPS 根域名', remoteEnabled: '开启远程 MCP', remoteSave: '保存远程设置', remoteOff: '远程连接已关闭（默认安全状态）', remoteOn: '远程 MCP 已开启',
     remoteInvalid: '开启前必须设置真实的 HTTPS 域名，例如 https://shop.example.com', remoteSaved: '远程 MCP 设置已保存',
+    masterTitle: 'AI 管家总开关', masterInfo: '一键停止全部 AI 接口（包括旧版 AI Key）和 MCP 授权。商城前台、人工后台和支付回调不受影响。升级后默认关闭。',
+    masterStart: '开启 AI 管家', masterStop: '立即暂停所有 AI', masterOff: 'AI 已暂停', masterOn: 'AI 已启动', masterConfirm: '确定允许已授权的 AI Agent 连接和使用其已有业务权限？涉及敏感操作依然需要逐项审批。', masterSaved: 'AI 总开关已更新',
+    websiteTitle: '网站内容编辑', websiteStart: '允许 AI 创建网站内容草稿', websiteStop: '停止 AI 创建网站内容草稿', websiteInfo: '独立授权 AI 创建未发布的文章、公告和首页 Banner 草稿，不会自动上架发布；需要远程 MCP 与总开关均开启。', websiteConfirm: '开启网站内容编辑后，拥有 site:content:write 权限的 AI 将能够创建未发布的文章和 Banner 草稿。确认开启？',
+    pausedNotice: '关闭后立即拒绝新的 AI 请求；已开始执行的操作可能完成，关闭不自动撤销已有变更。',
     commandsTitle: '复制对应工具的连接命令', commandHelp: '安装或登录过程中，会打开浏览器让你在商城后台确认授权；连接无需填写管理员密码或手动复制 Key。',
     commandCopy: '复制命令', endpoint: '远程 MCP 地址', securityHint: '请确认域名有可信 HTTPS 证书，且原 HTTP 管理端口没有直接暴露到公网。禁用后已有远程连接立即失效。',
     warning: '推荐远程 MCP 浏览器 OAuth：可分别授权 AI 创建下架草稿、申请上架/下架（每次仍须人工批准），写入权限默认不勾选。下方手动 AI Key 仅用于旧版本地只读方案。支付、退款、服务器操作不开放。',
@@ -58,6 +62,8 @@ const translations = {
     remoteTitle: '遠端 MCP · 快速連接', remoteInfo: '使用商城 HTTPS 直接連接，無需 NAS Python 或 SSH。可分配唯讀、草稿建立與上架申請權限；寫入權限預設關閉。',
     originLabel: '商城 HTTPS 網址', remoteEnabled: '啟用遠端 MCP', remoteSave: '儲存遠端設定', remoteOff: '遠端連接已關閉', remoteOn: '遠端 MCP 已啟用',
     remoteInvalid: '啟用前需要真實的 HTTPS 域名', remoteSaved: '遠端設定已儲存',
+    masterTitle: 'AI 管家總開關', masterInfo: '立即暫停所有 AI 入口、舊版 Key 與 MCP，商城顧客、人工管理與支付回呼不受影響，升級預設關閉。', masterStart: '啟用 AI 管家', masterStop: '立即暫停 AI', masterOff: 'AI 已暫停', masterOn: 'AI 已啟用', masterConfirm: '確定開啟已授權的 AI 連接？高風險操作仍需人工批准。', masterSaved: '已更新總開關',
+    websiteTitle: '網站內容編輯', websiteStart: '允許 AI 建立網站草稿', websiteStop: '暫停 AI 建立網站草稿', websiteInfo: '只建立未發布文章、公告與停用的首頁 Banner 草稿，不自動發布。', websiteConfirm: '允許擁有 site:content:write 的 AI 建立未發布草稿？', pausedNotice: '關閉後不允許新 AI 請求，執行中的操作可能完成，已有變更不會自動回復。',
     commandsTitle: '複製工具的連接指令', commandHelp: '工具會開啟瀏覽器，請在商城後台確認授權；無需在聊天中傳送管理員密碼。',
     commandCopy: '複製指令', endpoint: '遠端 MCP 網址', securityHint: '使用可信 HTTPS 證書並關閉直接公開的 HTTP 管理埠；關閉後遠端連接立即失效。',
     warning: '推薦遠端 MCP 瀏覽器 OAuth：可授權 AI 建立未上架草稿和申請上架/下架（逐次人工批准），寫入預設關閉。下方手動 AI Key 僅供舊版本地唯讀方式。支付、退款和伺服器不開放。',
@@ -81,6 +87,8 @@ const translations = {
     remoteTitle: 'Remote MCP · Quick Connect', remoteInfo: 'Connect over HTTPS without Python or SSH. Approve read, unpublished-draft creation or publication-request scopes explicitly; write scopes default off.',
     originLabel: 'Store HTTPS origin', remoteEnabled: 'Enable remote MCP', remoteSave: 'Save remote settings', remoteOff: 'Remote access is disabled by default', remoteOn: 'Remote MCP enabled',
     remoteInvalid: 'A valid public HTTPS domain is required', remoteSaved: 'Remote settings saved',
+    masterTitle: 'AI Manager Master Switch', masterInfo: 'Immediately stop all AI APIs (including legacy keys), MCP and OAuth. Human admin, storefront and payment callbacks stay online. Default OFF after upgrade.', masterStart: 'Enable AI Manager', masterStop: 'Pause ALL AI Now', masterOff: 'AI is paused', masterOn: 'AI is enabled', masterConfirm: 'Allow previously authorized AI agents to use their existing permissions? Sensitive actions still require explicit approval.', masterSaved: 'AI master switch updated',
+    websiteTitle: 'Website Content Editing', websiteStart: 'Allow AI to create website drafts', websiteStop: 'Pause AI website editing', websiteInfo: 'AI can create unpublished blog/notice drafts and disabled banners, never publish automatically.', websiteConfirm: 'Allow AI agents granted site:content:write to create unpublished drafts?', pausedNotice: 'Pausing rejects new AI requests, but already-running operations may finish. Existing changes are not rolled back.',
     commandsTitle: 'Copy a connection command', commandHelp: 'The client opens a browser for admin login and explicit scope approval; write scopes start unchecked. Never paste credentials into AI chat.',
     commandCopy: 'Copy command', endpoint: 'Remote MCP URL', securityHint: 'Use trusted HTTPS and close any public plaintext admin port. Disabling immediately blocks remote connections.',
     warning: 'Use remote MCP browser OAuth for optional unpublished-draft creation and human-approved publication requests. Write scopes start unchecked. The manual AI Key form below is only for legacy local read-only access. Payments, refunds and server operations remain blocked.',
@@ -103,12 +111,14 @@ const translations = {
 
 const { locale } = useI18n()
 const l = computed(() => translations[(locale.value as keyof typeof translations)] || translations['zh-CN'])
-interface RemoteConfig { enabled: boolean; public_origin: string }
-const remote = ref<RemoteConfig>({ enabled: false, public_origin: '' })
-const savedRemote = ref<RemoteConfig>({ enabled: false, public_origin: '' })
+interface RemoteConfig { enabled: boolean; public_origin: string; master_enabled: boolean; website_write_enabled: boolean }
+const emptyRemote = (): RemoteConfig => ({ enabled:false, public_origin:'', master_enabled:false, website_write_enabled:false })
+const remote = ref<RemoteConfig>(emptyRemote())
+const savedRemote = ref<RemoteConfig>(emptyRemote())
 const remoteBusy = ref(false)
+const controlBusy = ref(false)
 // Only saved server settings may appear as working connection commands.
-const mcpURL = computed(() => savedRemote.value.enabled && savedRemote.value.public_origin ? `${savedRemote.value.public_origin}/mcp` : '')
+const mcpURL = computed(() => savedRemote.value.master_enabled && savedRemote.value.enabled && savedRemote.value.public_origin ? `${savedRemote.value.public_origin}/mcp` : '')
 const connectionCommands = computed(() => {
   if (!mcpURL.value) return []
   return [
@@ -130,6 +140,21 @@ const saveRemote = async () => {
   } catch { notifyError(l.value.fail) }
   finally { remoteBusy.value = false }
 }
+const setControl = async (master: boolean, website: boolean) => {
+  if (controlBusy.value) return
+  if (master && !savedRemote.value.master_enabled && !await confirmAction(l.value.masterConfirm)) return
+  if (website && !savedRemote.value.website_write_enabled && !await confirmAction(l.value.websiteConfirm)) return
+  controlBusy.value = true
+  try {
+    const response = await adminAPI.updateAiControl({ master_enabled:master, website_write_enabled:master && website })
+    savedRemote.value = response.data.data
+    remote.value = { ...savedRemote.value }
+    notifySuccess(l.value.masterSaved)
+  } catch { notifyError(l.value.fail) }
+  finally { controlBusy.value = false }
+}
+const toggleMaster = () => setControl(!savedRemote.value.master_enabled, false)
+const toggleWebsite = () => setControl(true, !savedRemote.value.website_write_enabled)
 const copyCommand = async (value: string) => {
   try { await navigator.clipboard.writeText(value); notifySuccess(l.value.copied) }
   catch { notifyError(l.value.fail) }
@@ -155,7 +180,7 @@ const load = async () => {
     const [one, two, three] = await Promise.all([adminAPI.listAiKeys(), adminAPI.listAiAudit(), adminAPI.getAiRemote()])
     keys.value = Array.isArray(one.data?.data) ? one.data.data : []
     audits.value = Array.isArray(two.data?.data) ? two.data.data : []
-    savedRemote.value = three.data?.data || { enabled: false, public_origin: '' }
+    savedRemote.value = three.data?.data || emptyRemote()
     remote.value = { ...savedRemote.value }
     if (!remote.value.public_origin && window.location.protocol === 'https:') remote.value.public_origin = window.location.origin
   } catch (error: any) {
@@ -221,6 +246,22 @@ onBeforeUnmount(closeToken)
       <Button variant="outline" :disabled="busy" @click="load">{{ l.refresh }}</Button>
     </div>
     <p class="rounded-md border p-4 text-sm text-muted-foreground">{{ l.warning }}</p>
+
+    <Card>
+      <CardHeader><CardTitle>{{ l.masterTitle }}</CardTitle><p class="text-sm text-muted-foreground">{{ l.masterInfo }}</p></CardHeader>
+      <CardContent class="space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <strong>{{ savedRemote.master_enabled ? l.masterOn : l.masterOff }}</strong>
+          <Button :variant="savedRemote.master_enabled ? 'destructive' : 'default'" :disabled="controlBusy" @click="toggleMaster">{{ savedRemote.master_enabled ? l.masterStop : l.masterStart }}</Button>
+        </div>
+        <div class="rounded-md border p-3 space-y-3">
+          <strong class="text-sm">{{ l.websiteTitle }}</strong>
+          <p class="text-sm text-muted-foreground">{{ l.websiteInfo }}</p>
+          <Button variant="outline" :disabled="controlBusy || !savedRemote.master_enabled || !savedRemote.enabled" @click="toggleWebsite">{{ savedRemote.website_write_enabled ? l.websiteStop : l.websiteStart }}</Button>
+        </div>
+        <p class="text-sm text-muted-foreground">{{ l.pausedNotice }}</p>
+      </CardContent>
+    </Card>
 
     <Card>
       <CardHeader>

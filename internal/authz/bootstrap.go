@@ -250,6 +250,7 @@ func BuiltinRoleSeeds() []RoleSeed {
 				{Object: "/admin/ai-access/audit", Action: "GET"},
 				{Object: "/admin/ai-access/remote", Action: "GET"},
 				{Object: "/admin/ai-access/remote", Action: "PUT"},
+				{Object: "/admin/ai-access/control", Action: "PUT"},
 				{Object: "/admin/ai-access/oauth/requests/:id", Action: "GET"},
 				{Object: "/admin/ai-access/oauth/approve", Action: "POST"},
 				{Object: "/admin/ai-access/oauth/deny", Action: "POST"},

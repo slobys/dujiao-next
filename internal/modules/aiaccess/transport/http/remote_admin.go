@@ -19,6 +19,28 @@ func NewRemoteAdminHandler(service *application.RemoteService) *RemoteAdminHandl
 	return &RemoteAdminHandler{service: service}
 }
 
+// Control endpoint belongs ONLY to the human system-admin routes; AI tools
+// never expose a master re-enable capability.
+type ControlInput struct {
+	MasterEnabled       bool `json:"master_enabled"`
+	WebsiteWriteEnabled bool `json:"website_write_enabled"`
+}
+
+func (h *RemoteAdminHandler) UpdateControl(c *gin.Context) {
+	var input ControlInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		ginutil.RespondBindError(c, err)
+		return
+	}
+	setting, err := h.service.SetControl(c.Request.Context(), input.MasterEnabled, input.WebsiteWriteEnabled, adminID(c))
+	if err != nil {
+		bad(c, err)
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	response.Success(c, setting)
+}
+
 type RemoteConfigInput struct {
 	Enabled      bool   `json:"enabled"`
 	PublicOrigin string `json:"public_origin"`
@@ -105,6 +127,7 @@ func (h *RemoteAdminHandler) Deny(c *gin.Context) {
 func RegisterRemoteAdminRoutes(group gin.IRoutes, h *RemoteAdminHandler) {
 	group.GET("/ai-access/remote", h.Config)
 	group.PUT("/ai-access/remote", h.Update)
+	group.PUT("/ai-access/control", h.UpdateControl)
 	group.GET("/ai-access/oauth/requests/:id", h.Pending)
 	group.POST("/ai-access/oauth/approve", h.Approve)
 	group.POST("/ai-access/oauth/deny", h.Deny)

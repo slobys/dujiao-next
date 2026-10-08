@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/slobys/dujiao-next/actions/workflows/ci.yml/badge.svg)](https://github.com/slobys/dujiao-next/actions/workflows/ci.yml) [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE) [![Docker Compose](https://img.shields.io/badge/Deploy-Docker%20Compose-2496ED?logo=docker&logoColor=white)](scripts/fork-deploy.sh)
 
-> **本仓库是个人维护的 Fork，并非上游官方发行版。** 已提供一键部署、OpenClaw/n8n 集成与 **AI 接入中心 2.0**：在商城后台管理远程 MCP 和浏览器 OAuth+PKCE 授权；3.0 已新增受限的商品草稿创建与上架审批、脱敏订单查询、售后工单与严格未付款取消；4.0 新增专门权限与人工审批的人民币原钱包支付退款。原有本地 stdio MCP/AI Key 仍兼容。远程 MCP 不提供无需审批的上架或资金操作，也不提供原支付渠道直接退款、支付密钥修改；上线前务必备份并在目标服务器实际联调。
+> **本仓库是个人维护的 Fork，并非上游官方发行版。** 已提供一键部署、OpenClaw/n8n 集成与 **AI 接入中心 5.0**：统一 AI 总开关与网站内容编辑模式，并保留远程 MCP、OAuth+PKCE；3.0 已新增受限的商品草稿创建与上架审批、脱敏订单查询、售后工单与严格未付款取消；4.0 新增专门权限与人工审批的人民币原钱包支付退款。原有本地 stdio MCP/AI Key 仍兼容。远程 MCP 不提供无需审批的上架或资金操作，也不提供原支付渠道直接退款、支付密钥修改；上线前务必备份并在目标服务器实际联调。
 
 **快速导航：** [一键部署](#-一键部署本-fork) · [管理与更新](#-日常管理) · [数据与备份](#-数据与备份) · [通用 MCP 接入](integrations/mcp/README.md) · [AI 接入](integrations/mcp/README.md) · [开发指南](#-本地开发) · [与上游的区别](#-与上游的区别)
 
@@ -25,6 +25,7 @@
 | **AI 订单售后（第二批）** | **AI 查询脱敏订单状态、金额和时间；提交售后人工跟进工单；后台接收/拒绝/完成；无退款、取消或发货权限** |
 | **AI 严格取消审批（第三批）** | **完全未付款、无任何支付/退款/交付记录的独立订单，经管理员批准才执行取消；其他订单仅人工处理** |
 | **AI 钱包退款审批 4.0** | **AI 仅提出原钱包支付的人民币退款申请；后台人工确认单次最多 500 元；事务校验后可真正入账钱包，绝不自动退款原支付渠道** |
+| **AI 总控 5.0** | **系统管理员一键暂停商城的 MCP/OAuth/旧 AI Key 入口，独立开启网站内容草稿创建；支持未发布文章、公告、停用 Banner** |
 
 ## 🚀 一键部署（本 Fork）
 
@@ -242,6 +243,12 @@ sudo env DUJIAO_FORK_DIR=/opt/my-dujiao \
 ### AI 接入中心 4.0：原钱包支付的人工批准退款
 
 新增 `orders:wallet-refund:request` 权限，AI 只能预览资格、提交精确到分的 CNY 钱包退款提案，并查询自己的申请状态。后台**AI 钱包退款审批**展示订单和拟退金额，需要你逐次批准才能执行真正的用户钱包余额入账；单次上限 500 元。订单必须原始 100% 钱包支付、无任何第三方支付尝试及关联分销/优惠券等，且审批时再次检查状态与剩余可退金额。**不会调用支付宝、微信或银行卡原路退款。** [完整安全说明](integrations/mcp/README.md)。
+
+### AI 总控 5.0：网站 AI 管家可随时暂停
+
+升级后 AI 总开关默认关闭；在**AI 接入管理**明确开启后，已授权 AI 才能调用原有业务工具。关闭总开关会阻断 `/mcp`、OAuth 和旧机器 Key `/api/v1/ai/*` 的后续访问，不影响人工后台、访客或支付回调。新增独立的网站内容编辑开关，以及 `site:content:read`／`site:content:write` 两种默认未授权的权限，让 AI 创建未发布的文章、公告与停用首页 Banner 草稿。AI 自己不能开启开关。
+
+**这是逐步覆盖网站管理，不是任意后台超级管理员或 Root 权限。** 对已交给其他 Agent 的管理员 JWT、SSH 或 GitHub 权限，总开关无法代替其原系统的撤销。详情见 [AI 总控 5.0 说明](integrations/mcp/README.md)。
 
 ### 兼容：NAS/Windows 本地 MCP + 静态 AI Key
 

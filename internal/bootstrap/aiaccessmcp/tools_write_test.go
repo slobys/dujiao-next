@@ -15,6 +15,9 @@ import (
 	categorygormstore "github.com/dujiao-next/internal/modules/catalog/category/infrastructure/gormstore"
 	productdomain "github.com/dujiao-next/internal/modules/catalog/product/domain"
 	productgormstore "github.com/dujiao-next/internal/modules/catalog/product/store/gormstore"
+	contentapp "github.com/dujiao-next/internal/modules/content/application"
+	contentdomain "github.com/dujiao-next/internal/modules/content/domain"
+	contentgorm "github.com/dujiao-next/internal/modules/content/infrastructure/gormstore"
 	ordercontract "github.com/dujiao-next/internal/modules/order/contract"
 	orderdomain "github.com/dujiao-next/internal/modules/order/domain"
 	"github.com/dujiao-next/internal/shared/jsonmap"
@@ -485,5 +488,115 @@ func TestMCPWalletRefundScopeOnlyProposesFundsNotCredits(t *testing.T) {
 	})
 	if err == nil && !invalid.IsError {
 		t.Fatal("AI could submit wallet refund for online-paid order")
+	}
+}
+
+func TestMCPWebsiteContentDraftAndEmergencyOff(t *testing.T) {
+	services, _, remote := fixture(t)
+	ctx := context.Background()
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:ai_site_%d?mode=memory&cache=shared", time.Now().UnixNano())), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqldb, _ := db.DB()
+	sqldb.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = sqldb.Close() })
+	if err = db.AutoMigrate(&contentdomain.PostCategory{}, &contentdomain.Post{}, &contentdomain.PostProduct{}, &contentdomain.Banner{}); err != nil {
+		t.Fatal(err)
+	}
+	posts := contentgorm.NewPostStore(db)
+	services.ContentPostService = contentapp.NewPostService(posts, posts, contentgorm.NewPostCategoryStore(db), contentapp.SystemClock{})
+	services.ContentBannerService = contentapp.NewBannerService(contentgorm.NewBannerStore(db), contentapp.SystemClock{})
+	if _, err = remote.SetConfig(ctx, true, "https://shop.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = remote.SetControl(ctx, true, false, 1); err != nil {
+		t.Fatal(err)
+	}
+	token := issueOAuthToken(t, remote, "site:content:read site:content:write")
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Any("/mcp", New(services).Serve)
+	server := httptest.NewServer(router)
+	defer server.Close()
+	runCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+	client := mcp.NewClient(&mcp.Implementation{Name: "site-test", Version: "1"}, nil)
+	session, err := client.Connect(runCtx, &mcp.StreamableClientTransport{
+		Endpoint: server.URL + "/mcp", HTTPClient: &http.Client{Transport: rewritingTransport{Base: http.DefaultTransport, Token: token}},
+		DisableStandaloneSSE: true, MaxRetries: -1,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	listed, err := session.ListTools(runCtx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]bool{}
+	for _, tool := range listed.Tools {
+		names[tool.Name] = true
+	}
+	for _, name := range []string{"list_website_articles", "list_website_banners", "create_website_article_draft", "create_disabled_home_banner"} {
+		if !names[name] {
+			t.Fatalf("missing website tool %s", name)
+		}
+	}
+	if names["request_strict_wallet_refund"] || names["create_product_draft"] {
+		t.Fatal("website scope escalated")
+	}
+	args := map[string]any{"slug": "ai-test-notice", "type": "notice", "title": "AI 测试公告", "content": "待人工审核。"}
+	denied, err := session.CallTool(runCtx, &mcp.CallToolParams{Name: "create_website_article_draft", Arguments: args})
+	if err == nil && !denied.IsError {
+		t.Fatal("website write bypassed switch")
+	}
+	if _, err = remote.SetControl(ctx, true, true, 1); err != nil {
+		t.Fatal(err)
+	}
+	reply, err := session.CallTool(runCtx, &mcp.CallToolParams{Name: "create_website_article_draft", Arguments: args})
+	if err != nil || reply.IsError {
+		t.Fatalf("create draft %+v %v", reply, err)
+	}
+	var post contentdomain.Post
+	if err = db.Where("slug=?", "ai-test-notice").First(&post).Error; err != nil {
+		t.Fatal(err)
+	}
+	if post.IsPublished || post.PublishedAt != nil {
+		t.Fatal("AI published live post")
+	}
+	malicious, err := session.CallTool(runCtx, &mcp.CallToolParams{Name: "create_website_article_draft", Arguments: map[string]any{
+		"slug": "xss", "type": "notice", "title": "<script>alert(1)</script>", "content": "content",
+	}})
+	if err == nil && !malicious.IsError {
+		t.Fatal("XSS title accepted")
+	}
+	external, err := session.CallTool(runCtx, &mcp.CallToolParams{Name: "create_disabled_home_banner", Arguments: map[string]any{
+		"name": "external", "title": "Banner", "image": "https://attacker.example/image",
+	}})
+	if err == nil && !external.IsError {
+		t.Fatal("external banner URL accepted")
+	}
+	banner, err := session.CallTool(runCtx, &mcp.CallToolParams{Name: "create_disabled_home_banner", Arguments: map[string]any{
+		"name": "safe-home", "title": "活动", "image": "/uploads/banner.webp",
+	}})
+	if err != nil || banner.IsError {
+		t.Fatalf("banner draft %+v %v", banner, err)
+	}
+	var b contentdomain.Banner
+	if err = db.Where("name=?", "safe-home").First(&b).Error; err != nil {
+		t.Fatal(err)
+	}
+	if b.IsActive || b.LinkValue != "" {
+		t.Fatal("banner active without human review")
+	}
+	if _, err = remote.SetControl(ctx, false, false, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = session.ListTools(runCtx, nil); err == nil {
+		t.Fatal("MCP session still usable after master OFF")
+	}
+	if _, err = remote.WebsiteWriteActive(ctx); err == nil {
+		t.Fatal("website write remained enabled")
 	}
 }
