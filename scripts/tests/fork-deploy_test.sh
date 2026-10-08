@@ -1104,5 +1104,11 @@ fi
 check "repeat install does not overwrite public bind or Redis password" cmp -s "$TEST_DIR/fresh-public-before.env" "$TEST_DIR/fresh-public-install/.env"
 check "repeat install reprints the detected public IP" grep -Fxq '商城地址：http://8.8.8.8:18080' "$TEST_DIR/fresh-resume.output"
 
+if grep -Eqi 'Vultr|AWS|腾讯云|阿里云' "$REPO_DIR/scripts/fork-deploy.sh"; then
+  fail "manager runtime messages are cloud-provider neutral"
+else
+  pass "manager runtime messages are cloud-provider neutral"
+fi
+
 printf '%d passed, %d failed\n' "$passed" "$failed"
 ((failed == 0))

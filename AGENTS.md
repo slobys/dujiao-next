@@ -1,7 +1,7 @@
 # AGENTS.md
 
 本文件约束所有在本仓库工作的 AI 编码助手（Claude Code、Codex、Cursor、Copilot、Gemini 等）。
-架构、目录、构建方式的完整说明见 [README.md](README.md)；这里只列 **必须遵守的规则** 和 **最容易踩的坑**。
+架构、目录、构建方式的完整说明见 [本地开发指南](docs/DEVELOPMENT.md)；这里只列 **必须遵守的规则** 和 **最容易踩的坑**。
 与 README 冲突时以代码和测试为准，并顺手修正文档。
 
 ## 项目速览

@@ -599,7 +599,7 @@ print_access_links() {
       if public_ip=$(detect_public_ipv4); then
         base="http://$public_ip:$port"
       else
-        info "暂时无法可靠取得公网 IP；你可在 Vultr 控制台查看 IPv4 并访问 http://公网IP:$port"
+        info "暂时无法可靠取得公网 IP；请在云服务商控制台核对公网 IPv4 并访问 http://公网IP:$port"
       fi
     else
       base="http://$bind:$port"
@@ -615,14 +615,14 @@ print_access_links() {
       printf '后台地址：暂时无法从配置读取，请检查 data/config.yml。\n'
     fi
   else
-    printf '商城地址：尚未取得可信公网 IP，请先核对 Vultr 实例 IPv4。\n'
+    printf '商城地址：尚未取得可信公网 IP，请先核对云服务器实例的公网 IPv4。\n'
     printf '后台路径：%s\n' "$admin_path"
   fi
   if [[ "$base" == http://127.* ]]; then
     printf '说明：此地址仅能在服务器本机使用，浏览器从外网无法打开。\n'
   elif [[ "$base" == http://* ]]; then
     printf '提示：当前是明文 HTTP，仅用于临时调试。请使用菜单 9 配置域名及 HTTPS。\n'
-    printf '提示：已检测到地址，不代表外网端口已放行；如打不开请检查 Vultr 云防火墙。\n'
+    printf '提示：已检测到地址，不代表外网端口已放行；如打不开请检查云服务商安全组、防火墙及端口映射。\n'
   fi
   printf '==================================\n'
 }
@@ -820,7 +820,7 @@ confirm_public_bind() {
   fi
   [[ -r /dev/tty && -w /dev/tty ]] ||
     die "公网监听需明确确认。自动化请设置 DUJIAO_CONFIRM_PUBLIC=YES，并确保有 HTTPS 和防火墙策略。"
-  printf '\n[警告] 将商城绑定到非回环 IP：%s，可能允许其它机器访问管理后台。\n请先限制 Vultr/系统防火墙来源，并配置 HTTPS 反向代理。\n确认继续请输入 PUBLIC：' "$bind" >/dev/tty
+  printf '\n[警告] 将商城绑定到非回环 IP：%s，可能允许其它机器访问管理后台。\n请先限制云服务商安全组和系统防火墙来源，并配置 HTTPS 反向代理。\n确认继续请输入 PUBLIC：' "$bind" >/dev/tty
   IFS= read -r answer </dev/tty || die "操作已取消。"
   [[ "$answer" == "PUBLIC" ]] || die "没有获得公网监听确认，未修改配置。"
 }
@@ -1142,7 +1142,7 @@ run_configure_https() {
     die "Caddy 启动失败，正在恢复旧配置。"
   info "正在等待 Let's Encrypt/公信 CA 证书签发与 HTTPS 实际验证..."
   wait_for_https "$domain" ||
-    die "HTTPS 证书仍不可用，请确认 Vultr 防火墙 TCP 80/443、DNS 和 Caddy 日志。"
+    die "HTTPS 证书仍不可用，请确认云服务商安全组及系统防火墙已开放 TCP 80/443，并检查 DNS 和 Caddy 日志。"
 
   HTTPS_PENDING=0
   rm -rf -- "$HTTPS_BACKUP_DIR"

@@ -2,6 +2,8 @@
 
 提供统一的 AI 接入方式：**推荐直接使用 Go 商城内置的、浏览器 OAuth 授权的远程 MCP**，无需 NAS 上的本地 Python/SSH 转发；同时保留使用 [MCP 官方 Python SDK](https://github.com/modelcontextprotocol/python-sdk) 的老版本地 stdio MCP 以兼容离线和内网场景。独立 AI 身份与管理员登录完全隔离，不会因为 MCP 连接而获得商城管理员 JWT。
 
+**客户端接入实测状态（截至 2026-10-08）：** OpenClaw 2026.9.8 已在 NAS 完成 OAuth 授权与 MCP doctor 探测；Codex CLI、Claude Code 的官方 HTTP MCP 命令已核对，但尚未在本商城完成端到端登录实测。面向视频观众的三种客户端教程、回调处理、权限选择和验证方法见 **[MCP 客户端接入教程](../../docs/MCP-CLIENTS.md)**。
+
 ## AI 总控 5.0：一键开启／暂停网站 AI 管家
 
 **升级后 AI 总开关默认关闭。** 后台 **系统设置 → AI 接入管理** 中新增三个独立控制：
@@ -28,7 +30,7 @@
 
 **推荐新方案：** 不必在 NAS/Windows 安装或运行本目录的 Python 服务。商城在 **同一 Go 进程**内提供官方 SDK 的远程无状态 Streamable HTTP `/mcp`；它**默认关闭**，仅系统管理员可在后台开启，必须填写真实、可信的 HTTPS 根域名。
 
-升级已经部署的 Fork 时，先在 Vultr 通过 `sudo dujiao-fork backup` 备份并核验备份，再执行 `sudo dujiao-fork update` **构建包含新 Go 后端和 Vue 管理后台的镜像**；仅执行 `git pull` 不会更新正在运行的镜像。请先使用安装器菜单 9 完成域名 HTTPS，并将旧的公开 `18080` HTTP 入口改成仅本机访问，限制 Vultr 防火墙来源；不要从浏览器公开传输管理员密码。
+升级已经部署的 Fork 时，先在部署商城的云服务器上运行 `sudo dujiao-fork backup` 备份并核验备份，再执行 `sudo dujiao-fork update` **构建包含新 Go 后端和 Vue 管理后台的镜像**；仅执行 `git pull` 不会更新正在运行的镜像。请先使用安装器菜单 9 完成域名 HTTPS，并将旧的公开 `18080` HTTP 入口改成仅本机访问，限制云服务商安全组和系统防火墙来源；不要从浏览器公开传输管理员密码。
 
 升级后先在 **AI 接入管理**明确打开上述 **AI 总开关**，再打开商城**系统设置 → AI 接入管理 → 远程 MCP**，检查填写的真实站点 HTTPS 根域名（例如 `https://shop.example.com`），打开开关并保存。面板会自动显示当前真实域名对应的 `/mcp` 地址，并提供 Codex / Claude Code / OpenClaw 的**复制配置**功能。保存前以及关闭时不会生成可用连接命令。
 
@@ -41,18 +43,19 @@ codex mcp login dujiao
 
 # Claude Code
 claude mcp add --transport http dujiao https://shop.example.com/mcp
-# 进入 Claude Code 会话，执行 /mcp 并选择登录授权
+claude mcp login dujiao
+# 或进入 Claude Code 会话，执行 /mcp 并选择登录授权
 
 # OpenClaw
 openclaw mcp add dujiao --url https://shop.example.com/mcp --transport streamable-http --auth oauth
 openclaw mcp login dujiao
 ```
 
-首次登录时，AI 客户端会打开一个浏览器授权页面；如果未登录商城，先完成正常管理员登录（包括现有 2FA），再查看**真实客户端名称、回调 URI 和只读权限**，可以取消或只批准其中一部分。授权后浏览器返回客户端，客户端自动保存会话。用户无需把后台密码交给 AI 工具，也不需要将静态 AI Key 配置到客户端。
+首次登录时，AI 客户端会打开一个浏览器授权页面；如果未登录商城，先完成正常管理员登录（包括现有 2FA），再查看**真实客户端名称、回调 URI 和请求的权限（建议首次只选只读）**，可以取消或只批准其中一部分。授权后浏览器返回客户端，客户端自动保存会话。用户无需把后台密码交给 AI 工具，也不需要将静态 AI Key 配置到客户端。
 
 服务端使用 OAuth 授权码 + **PKCE S256**、服务端登记/校验的回调 URI、MCP Protected Resource Metadata 与 Authorization Server Metadata、兼容性动态客户端注册（DCR）；令牌绑定到当前商城 `/mcp` 资源，访问 token 有效期 **1 小时**，刷新 token 最长 **30 天**且每次刷新会轮换。令牌与授权码仅存储哈希，可通过撤销对应 AI 凭证立即使原连接失效；关闭远程 MCP 后所有远程工具/授权接口直接返回不可用。OAuth 客户端元数据文件（CIMD）尚未实现；使用不支持 DCR 回退的客户端时可能需要进一步兼容开发。
 
-远程 MCP 的默认连接仍只提供商品/分类、库存、营业日报和**离线不写库**的草稿预览。3.0 在管理员额外显式授予两个新 scope 后，才允许创建真实下架草稿及申请上架/下架；仍不提供退款、支付配置、顾客隐私或任意代码执行。启用服务不会让 AI 拥有浏览器的管理员权限。服务器持久化审计记录工具访问及密钥操作，不记录完整 bearer、客户明文内容或响应体。
+远程 MCP 仅授予只读 Scope 时可查询商品/分类、库存和营业日报。管理员额外授予相应 Scope 后，才可创建真实下架草稿、申请上架/下架、读取脱敏订单、提交售后审核，以及按严格条件申请钱包退款；实际钱包入账必须由管理员逐笔审批。**不提供任意原支付渠道退款、支付密钥修改、顾客隐私读取或任意代码执行。**启用服务不会让 AI 拥有浏览器的管理员权限。服务器持久化审计记录工具访问及密钥操作，不记录完整 bearer、客户明文内容或响应体。
 
 **注意：** `https://shop.example.com/mcp` 是给 MCP 客户端使用的端点，不是网页，浏览器直接 GET 通常会收到 405。可以先通过 `https://shop.example.com/.well-known/oauth-protected-resource/mcp` 查看授权元数据；此元数据默认关闭时返回 404，开启并 HTTPS 正常时才可访问。自定义域名、CDN 与 TLS 反向代理必须保留原始 Host 和可信的 HTTPS 转发信号。不要用 `--insecure` 跳过证书检查，也不要直接公开 Go 后端 HTTP 端口。
 
@@ -180,7 +183,7 @@ AI 使用示例（在 OAuth 授权时选择相应权限）：
 
 ## 第一步：商城后台创建独立 AI Key
 
-1. 在 Vultr 商城先配置**可信 HTTPS 域名**（安装器菜单 9），从 NAS 远程访问 `http://公网IP:18080` 仍被 Python 客户端拒绝。首次开启此功能需更新 Go 后端及 Vue 管理后台；**仅 `git pull` 不会升级运行中的 Docker 镜像**。建议先执行 `sudo dujiao-fork backup` 并确认归档完整，再执行 `sudo dujiao-fork update`（该命令还会自动再备份并重建商城镜像）。数据库迁移会新增两张独立表；生产前请确认备份可恢复。
+1. 在实际部署商城的 VPS 上先配置**可信 HTTPS 域名**（安装器菜单 9），从 NAS 远程访问 `http://公网IP:18080` 仍被 Python 客户端拒绝。首次开启此功能需更新 Go 后端及 Vue 管理后台；**仅 `git pull` 不会升级运行中的 Docker 镜像**。建议先执行 `sudo dujiao-fork backup` 并确认归档完整，再执行 `sudo dujiao-fork update`（该命令还会自动再备份并重建商城镜像）。数据库迁移会新增两张独立表；生产前请确认备份可恢复。
 2. 用拥有 `system_admin` 权限的正常管理员账户登录商城后台，打开**系统设置 → AI 接入管理**。为 OpenClaw、Codex、Claude Code **分别创建**不同的 Key，设置名称、有效期 **1～90 天**，按需勾选 `catalog:read`（商品和分类）、`inventory:read`（库存预警）、`report:read`（经营报表）。不要授予所有人相同的 Key。
 3. 点击创建后**完整 Key 只会显示一次**。妥善保存到对应的 NAS/Windows 私密凭据文件；以后只显示名称、Key ID、权限、过期/使用时间。随时可以在后台**撤销**（立即生效）或**轮换**（原 Key 立即失效，新 Key 需要重新保存并更新到客户端）。轮换不会自动延长既有有效期。
 4. Go 服务验证 SHA-256 哈希、有效期和逐路由 scope，只接受 `GET /api/v1/ai/products`、`/categories`、`/dashboard/inventory-alerts`、`/dashboard/overview`、`/dashboard/rankings`；机器 Key **不能访问 `/api/v1/admin`，不能伪装管理员 JWT**。后台审计记录创建、轮换、撤销及已授权 API 访问，不保存明文 Key、用户内容或 API 响应体。
