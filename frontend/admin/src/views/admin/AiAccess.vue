@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 
-type Scope = 'catalog:read' | 'inventory:read' | 'report:read'
+type Scope = 'catalog:read' | 'inventory:read' | 'report:read' | 'catalog:draft:write' | 'catalog:publish:request'
 interface AiKey {
   id: number
   name: string
@@ -32,15 +32,16 @@ interface AiAudit {
 const translations = {
   'zh-CN': {
     title: 'AI 接入管理', subtitle: '统一管理 OpenClaw、Codex、Claude Code 的独立访问凭证',
-    remoteTitle: '远程 MCP · 一键连接', remoteInfo: '通过商城 HTTPS 直接连接 AI 工具，无需 NAS Python 服务或 SSH 转发。使用浏览器登录后台并批准只读权限。',
+    remoteTitle: '远程 MCP · 一键连接', remoteInfo: '通过商城 HTTPS 直接连接 AI，无需 NAS Python 或 SSH。浏览器登录后选择只读、建草稿及上架申请权限；写入权限默认关闭。',
     originLabel: '商城 HTTPS 根域名', remoteEnabled: '开启远程 MCP', remoteSave: '保存远程设置', remoteOff: '远程连接已关闭（默认安全状态）', remoteOn: '远程 MCP 已开启',
     remoteInvalid: '开启前必须设置真实的 HTTPS 域名，例如 https://shop.example.com', remoteSaved: '远程 MCP 设置已保存',
     commandsTitle: '复制对应工具的连接命令', commandHelp: '安装或登录过程中，会打开浏览器让你在商城后台确认授权；连接无需填写管理员密码或手动复制 Key。',
     commandCopy: '复制命令', endpoint: '远程 MCP 地址', securityHint: '请确认域名有可信 HTTPS 证书，且原 HTTP 管理端口没有直接暴露到公网。禁用后已有远程连接立即失效。',
-    warning: '当前 AI Key 只允许安全读取商品、库存和营业数据，不会授权商品上架、支付配置或退款。密钥仅显示一次，请立即妥善保存。',
+    warning: '推荐远程 MCP 浏览器 OAuth：可分别授权 AI 创建下架草稿、申请上架/下架（每次仍须人工批准），写入权限默认不勾选。下方手动 AI Key 仅用于旧版本地只读方案。支付、退款、服务器操作不开放。',
     name: '应用名称', example: '例如：NAS OpenClaw / Windows Codex',
     days: '有效期（天，1–90）', scopes: '允许的能力',
     catalog: '商品和分类只读', inventory: '库存预警只读', report: '营业报表只读',
+    draftWrite: '创建下架草稿（自动执行）', publishRequest: '申请上架/下架（每次人工批准）',
     create: '创建凭证', createConfirm: '确认创建专用 AI Key？完整密钥仅显示一次。',
     refresh: '刷新', rotate: '轮换', rotateConfirm: '旧密钥将立即失效。确定轮换吗？',
     revoke: '撤销', revokeConfirm: '立即撤销此凭证，所有关联的 AI 客户端将无法使用。确定吗？',
@@ -50,19 +51,20 @@ const translations = {
     tokenTitle: '请立即保存 AI Key', tokenNote: '此窗口关闭后不再显示。请在 NAS/本机的私密凭据文件中使用 DUJIAO_AI_TOKEN，不要发送到聊天、日志或 GitHub。',
     copy: '复制密钥', copied: '已复制到剪贴板', close: '我已安全保存，关闭',
     created: '凭证创建成功', rotated: '已轮换，旧密钥已失效', revokedMsg: '凭证已撤销',
-    fail: '操作失败，请检查权限或网络', validation: '请输入名称、1–90 天有效期，并至少勾选一个只读权限',
+    fail: '操作失败，请检查权限或网络', validation: '请输入名称、1–90 天有效期，并至少勾选一个权限',
   },
   'zh-TW': {
     title: 'AI 接入管理', subtitle: '統一管理 OpenClaw、Codex、Claude Code 的獨立存取憑證',
-    remoteTitle: '遠端 MCP · 快速連接', remoteInfo: '使用商城 HTTPS 網址直接連接，無需 NAS Python 或 SSH 轉發。瀏覽器登入後確認唯讀權限。',
+    remoteTitle: '遠端 MCP · 快速連接', remoteInfo: '使用商城 HTTPS 直接連接，無需 NAS Python 或 SSH。可分配唯讀、草稿建立與上架申請權限；寫入權限預設關閉。',
     originLabel: '商城 HTTPS 網址', remoteEnabled: '啟用遠端 MCP', remoteSave: '儲存遠端設定', remoteOff: '遠端連接已關閉', remoteOn: '遠端 MCP 已啟用',
     remoteInvalid: '啟用前需要真實的 HTTPS 域名', remoteSaved: '遠端設定已儲存',
     commandsTitle: '複製工具的連接指令', commandHelp: '工具會開啟瀏覽器，請在商城後台確認授權；無需在聊天中傳送管理員密碼。',
     commandCopy: '複製指令', endpoint: '遠端 MCP 網址', securityHint: '使用可信 HTTPS 證書並關閉直接公開的 HTTP 管理埠；關閉後遠端連接立即失效。',
-    warning: 'AI Key 目前僅允許安全讀取商品、庫存和營業資料，不授權上架、支付設定或退款。金鑰只顯示一次，請立即安全保存。',
+    warning: '推薦遠端 MCP 瀏覽器 OAuth：可授權 AI 建立未上架草稿和申請上架/下架（逐次人工批准），寫入預設關閉。下方手動 AI Key 僅供舊版本地唯讀方式。支付、退款和伺服器不開放。',
     name: '應用程式名稱', example: '例如：NAS OpenClaw / Windows Codex',
     days: '有效期（天，1–90）', scopes: '允許的能力',
     catalog: '商品與分類唯讀', inventory: '庫存警示唯讀', report: '營業報表唯讀',
+    draftWrite: '建立未上架草稿（自動）', publishRequest: '申請上架/下架（逐次人工批准）',
     create: '建立憑證', createConfirm: '確定建立 AI Key？完整金鑰只顯示一次。',
     refresh: '重新整理', rotate: '輪換', rotateConfirm: '舊金鑰將立即失效。確定輪換？',
     revoke: '撤銷', revokeConfirm: '立即撤銷後，所有連接的 AI 都無法繼續使用。確定？',
@@ -72,19 +74,20 @@ const translations = {
     tokenTitle: '請立即儲存 AI Key', tokenNote: '關閉視窗後不再顯示。請在 NAS/本機的私人憑證檔使用 DUJIAO_AI_TOKEN，不要放入聊天、日誌或 GitHub。',
     copy: '複製金鑰', copied: '已複製至剪貼簿', close: '我已安全儲存，關閉',
     created: '憑證建立成功', rotated: '已輪換，舊金鑰已失效', revokedMsg: '憑證已撤銷',
-    fail: '操作失敗，請檢查權限或網路', validation: '請輸入名稱、1–90 天有效期並勾選至少一項唯讀權限',
+    fail: '操作失敗，請檢查權限或網路', validation: '請輸入名稱、1–90 天有效期並勾選至少一項權限',
   },
   'en-US': {
     title: 'AI Access Management', subtitle: 'Manage separate credentials for OpenClaw, Codex and Claude Code',
-    remoteTitle: 'Remote MCP · Quick Connect', remoteInfo: 'Connect directly over the store HTTPS domain; no NAS Python or SSH tunnel. Authorize read-only access in your browser.',
+    remoteTitle: 'Remote MCP · Quick Connect', remoteInfo: 'Connect over HTTPS without Python or SSH. Approve read, unpublished-draft creation or publication-request scopes explicitly; write scopes default off.',
     originLabel: 'Store HTTPS origin', remoteEnabled: 'Enable remote MCP', remoteSave: 'Save remote settings', remoteOff: 'Remote access is disabled by default', remoteOn: 'Remote MCP enabled',
     remoteInvalid: 'A valid public HTTPS domain is required', remoteSaved: 'Remote settings saved',
-    commandsTitle: 'Copy a connection command', commandHelp: 'The client opens a browser for admin login and explicit read-only approval. Never paste admin passwords into AI chat.',
+    commandsTitle: 'Copy a connection command', commandHelp: 'The client opens a browser for admin login and explicit scope approval; write scopes start unchecked. Never paste credentials into AI chat.',
     commandCopy: 'Copy command', endpoint: 'Remote MCP URL', securityHint: 'Use trusted HTTPS and close any public plaintext admin port. Disabling immediately blocks remote connections.',
-    warning: 'AI Keys allow read-only product, inventory and sales access. They never grant publishing, payment or refund permissions. A new token is shown only once.',
+    warning: 'Use remote MCP browser OAuth for optional unpublished-draft creation and human-approved publication requests. Write scopes start unchecked. The manual AI Key form below is only for legacy local read-only access. Payments, refunds and server operations remain blocked.',
     name: 'Application name', example: 'e.g. NAS OpenClaw / Windows Codex',
     days: 'Lifetime (days, 1–90)', scopes: 'Granted capabilities',
     catalog: 'Read products and categories', inventory: 'Read inventory alerts', report: 'Read sales summaries',
+    draftWrite: 'Create unpublished drafts automatically', publishRequest: 'Request publish/unpublish (human approval)',
     create: 'Create credential', createConfirm: 'Create an AI Key? The full secret is displayed only once.',
     refresh: 'Refresh', rotate: 'Rotate', rotateConfirm: 'The old secret will stop working immediately. Continue?',
     revoke: 'Revoke', revokeConfirm: 'Revoke this credential immediately for all connected agents?',
@@ -94,7 +97,7 @@ const translations = {
     tokenTitle: 'Save your AI Key now', tokenNote: 'The token cannot be shown again. Use DUJIAO_AI_TOKEN in a private NAS/local secret file. Never put it in chat, logs or GitHub.',
     copy: 'Copy token', copied: 'Copied to clipboard', close: 'I have saved it safely',
     created: 'Credential created', rotated: 'Rotated; old token invalidated', revokedMsg: 'Credential revoked',
-    fail: 'Operation failed. Check access and network', validation: 'Enter a name, 1–90 day lifetime and at least one read permission',
+    fail: 'Operation failed. Check access and network', validation: 'Enter a name, 1–90 day lifetime and at least one permission',
   },
 } as const
 
@@ -138,11 +141,13 @@ const name = ref('')
 const days = ref(30)
 const permissions = ref<Scope[]>(['catalog:read', 'inventory:read', 'report:read'])
 const justCreatedToken = ref('')
+// Manual static keys are used by the legacy local read-only MCP. The two
+// write scopes are granted only through explicit remote OAuth consent.
 const scopeTypes: Scope[] = ['catalog:read', 'inventory:read', 'report:read']
 const keyState = (item: AiKey) =>
   item.revoked_at ? l.value.revoked : new Date(item.expires_at) <= new Date() ? l.value.expired : l.value.active
 const formatTime = (value?: string | null) => value ? new Date(value).toLocaleString() : '—'
-const scopeLabel = (s: Scope) => s === 'catalog:read' ? l.value.catalog : s === 'inventory:read' ? l.value.inventory : l.value.report
+const scopeLabel = (s: Scope) => s === 'catalog:read' ? l.value.catalog : s === 'inventory:read' ? l.value.inventory : s === 'report:read' ? l.value.report : s === 'catalog:draft:write' ? l.value.draftWrite : l.value.publishRequest
 
 const load = async () => {
   busy.value = true

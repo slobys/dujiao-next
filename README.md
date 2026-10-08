@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/slobys/dujiao-next/actions/workflows/ci.yml/badge.svg)](https://github.com/slobys/dujiao-next/actions/workflows/ci.yml) [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE) [![Docker Compose](https://img.shields.io/badge/Deploy-Docker%20Compose-2496ED?logo=docker&logoColor=white)](scripts/fork-deploy.sh)
 
-> **本仓库是个人维护的 Fork，并非上游官方发行版。** 已提供一键部署、OpenClaw/n8n 集成与 **AI 接入中心 2.0**：在商城后台默认关闭的远程 MCP 开关、HTTPS 地址、可复制 Codex/Claude Code/OpenClaw 配置、浏览器 OAuth+PKCE 授权、只读范围和可撤销凭证。原有本地 stdio MCP/AI Key 仍兼容。远程 MCP 不提供自动上架、退款或支付修改；上线前务必备份并在目标服务器实际联调。
+> **本仓库是个人维护的 Fork，并非上游官方发行版。** 已提供一键部署、OpenClaw/n8n 集成与 **AI 接入中心 2.0**：在商城后台管理远程 MCP 和浏览器 OAuth+PKCE 授权；3.0 新增受限的自动创建下架商品草稿、申请上架/下架、审批中心及审计。原有本地 stdio MCP/AI Key 仍兼容。远程 MCP 不提供自动上架、退款或支付修改；上线前务必备份并在目标服务器实际联调。
 
 **快速导航：** [一键部署](#-一键部署本-fork) · [管理与更新](#-日常管理) · [数据与备份](#-数据与备份) · [通用 MCP 接入](integrations/mcp/README.md) · [AI 接入](integrations/mcp/README.md) · [开发指南](#-本地开发) · [与上游的区别](#-与上游的区别)
 
@@ -21,6 +21,7 @@
 | **通用 MCP 初版** | **Codex、Claude Code、OpenClaw 共享安全只读商品/库存/营业报表工具及离线商品草稿预览** |
 | **AI 接入管理** | **独立 AI Key、分配只读 scope、设置 1–90 天到期、即刻撤销和轮换、访问审计（后台系统设置）** |
 | **AI 接入中心 2.0** | **内置远程 HTTP MCP（默认关闭）、OAuth PKCE 浏览器授权、复制配置式远程连接、1 小时访问令牌与旋转刷新令牌** |
+| **AI 接入中心 3.0（第一批）** | **AI 自动创建未上架、零库存商品草稿；提交上架/下架申请；后台逐条批准/拒绝；数据库并发保护、审计与撤销** |
 
 ## 🚀 一键部署（本 Fork）
 
@@ -215,11 +216,17 @@ sudo env DUJIAO_FORK_DIR=/opt/my-dujiao \
 
 ## 🤖 AI 接入（远程 MCP / 浏览器授权 / 旧版兼容）
 
-### 推荐：AI 接入中心 2.0
+### 推荐：AI 接入中心 2.0 远程连接（3.0 继续复用）
 
-**无需在 NAS/Windows 安装本地 Python MCP 或配置 SSH：** 商城服务器原生暴露一个可选的 `https://你的域名/mcp` MCP 端点（**默认关闭**），打开后台**系统设置 → AI 接入管理 → 远程 MCP**，保存可信 HTTPS 根域名并启用，直接复制 OpenClaw、Codex 或 Claude Code 配置命令，之后浏览器完成管理员身份验证和手动授权即可。MCP 使用标准 OAuth PKCE 与受限只读 scope，客户端获得的是专属于该 MCP 资源的短期访问令牌，不是管理员 JWT。
+**无需在 NAS/Windows 安装本地 Python MCP 或配置 SSH：** 商城服务器原生暴露一个可选的 `https://你的域名/mcp` MCP 端点（**默认关闭**），打开后台**系统设置 → AI 接入管理 → 远程 MCP**，保存可信 HTTPS 根域名并启用，直接复制 OpenClaw、Codex 或 Claude Code 配置命令，之后浏览器完成管理员身份验证和手动授权即可。MCP 使用标准 OAuth PKCE 与按 scope 控制的操作权限，客户端获得的是专属于该 MCP 资源的短期访问令牌，不是管理员 JWT。
 
 生产升级请先 `sudo dujiao-fork backup`，确认备份完整，再运行 `sudo dujiao-fork update` 构建新 Go/Vue 镜像。必须通过受信任 HTTPS 域名访问，并限制旧的公网明文 `18080` 端口。端点默认关闭时返回 404；开启后在客户端完成 OAuth 授权方可使用。完整操作参见 **[AI 接入中心 2.0 使用说明](integrations/mcp/README.md)**。
+
+### AI 接入中心 3.0：开始安全管理商品
+
+新增 **`catalog:draft:write`**（允许 AI 自动创建真实但强制下架的零库存人工交付商品草稿）和 **`catalog:publish:request`**（只允许发起上架/下架申请，**每次必须由你在“AI 操作审批”页面批准**）。两项权限默认都不勾选，既有客户端不会自动获得。后台审批会核对商品价格、状态与更新时间并执行一次性条件更新，防止并发修改和审批重放。
+
+**这是分阶段落地的第一批业务写入能力，不代表 AI 已能完全控制所有商城功能。** 订单发货、实际退款、批量改价、支付密钥和生产代码部署尚未开放。具体示例、权限与更新方式见 [AI 接入中心 3.0 说明](integrations/mcp/README.md)。
 
 ### 兼容：NAS/Windows 本地 MCP + 静态 AI Key
 

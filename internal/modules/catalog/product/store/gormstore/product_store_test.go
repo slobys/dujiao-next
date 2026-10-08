@@ -695,6 +695,50 @@ func TestProductRepositoryListCombinesActiveStateWithOtherFilters(t *testing.T) 
 	}
 }
 
+func TestCompareAndSetProductActiveGuardsAgainstConcurrentChanges(t *testing.T) {
+	repo, db := setupProductStoreTest(t)
+	product := &productdomain.Product{
+		CategoryID: 1, Slug: "ai-guarded", TitleJSON: jsonmap.JSON{"zh-CN": "test"},
+		PriceAmount: money.FromDecimal(decimal.RequireFromString("29.90")), IsActive: false,
+	}
+	if err := repo.Create(product); err != nil {
+		t.Fatal(err)
+	}
+	id := fmt.Sprint(product.ID)
+	original, err := repo.GetByID(id)
+	if err != nil || original == nil {
+		t.Fatal(err)
+	}
+	ok, err := repo.CompareAndSetProductActive(id, original.UpdatedAt, false, original.PriceAmount, true)
+	if err != nil || !ok {
+		t.Fatalf("first CAS failed: %v, %v", err, ok)
+	}
+	after, err := repo.GetByID(id)
+	if err != nil || after == nil || !after.IsActive {
+		t.Fatalf("publication failed: %+v %v", after, err)
+	}
+	ok, err = repo.CompareAndSetProductActive(id, original.UpdatedAt, false, original.PriceAmount, true)
+	if err != nil || ok {
+		t.Fatalf("stale CAS unexpectedly succeeded: %v %v", ok, err)
+	}
+	wrongPrice := money.FromDecimal(decimal.RequireFromString("1.00"))
+	ok, err = repo.CompareAndSetProductActive(id, after.UpdatedAt, true, wrongPrice, false)
+	if err != nil || ok {
+		t.Fatalf("wrong price CAS unexpectedly succeeded: %v %v", ok, err)
+	}
+	if err = db.Model(&productdomain.Product{}).Where("id=?", product.ID).Update("sort_order", 42).Error; err != nil {
+		t.Fatal(err)
+	}
+	ok, err = repo.CompareAndSetProductActive(id, after.UpdatedAt, true, after.PriceAmount, false)
+	if err != nil || ok {
+		t.Fatalf("concurrent human edit overwritten: %v %v", ok, err)
+	}
+	got, err := repo.GetByID(id)
+	if err != nil || !got.IsActive || got.SortOrder != 42 {
+		t.Fatalf("human edit lost: %+v %v", got, err)
+	}
+}
+
 // OnlyActive 是公开侧强制的「必须上架」，不应被 IsActive=false 反向覆盖成空集。
 func TestProductRepositoryListOnlyActiveTakesPrecedenceOverIsActive(t *testing.T) {
 	repo, _ := setupProductStoreTest(t)

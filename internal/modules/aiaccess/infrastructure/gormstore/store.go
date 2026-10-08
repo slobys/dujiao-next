@@ -63,6 +63,14 @@ func (s *Store) RotateWithAudit(ctx context.Context, id uint, hash string, now t
 		if err := tx.Where("key_id = ?", audit.KeyID).Delete(&domain.OAuthRefresh{}).Error; err != nil {
 			return err
 		}
+		// Revoking a compromised access secret must also invalidate every
+		// still-pending AI proposal authored by that key. Old proposals
+		// cannot later be approved under a newly rotated credential.
+		if err := tx.Model(&domain.ActionRequest{}).
+			Where("key_id = ? AND status = ?", audit.KeyID, domain.ActionPending).
+			Updates(map[string]interface{}{"status": domain.ActionRejected, "failure_code": "key_rotated", "updated_at": now}).Error; err != nil {
+			return err
+		}
 		if err := tx.Create(audit).Error; err != nil {
 			return err
 		}

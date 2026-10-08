@@ -322,6 +322,12 @@ const routes = [
         meta: { permission: 'GET:/admin/ai-access/keys' },
       },
       {
+        path: 'ai-actions',
+        name: 'ai-actions',
+        component: () => import('@/views/admin/AiActionApprovals.vue'),
+        meta: { permission: 'GET:/admin/ai-access/actions' },
+      },
+      {
         path: 'ai-authorize',
         name: 'ai-authorize',
         component: () => import('@/views/admin/AiAuthorize.vue'),

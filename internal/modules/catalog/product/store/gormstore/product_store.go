@@ -11,6 +11,7 @@ import (
 	productdomain "github.com/dujiao-next/internal/modules/catalog/product/domain"
 
 	"github.com/dujiao-next/internal/persistence/gormutil"
+	"github.com/dujiao-next/internal/shared/money"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -278,6 +279,16 @@ func (r *ProductStore) Update(product *productdomain.Product) error {
 // QuickUpdate 快速更新商品指定字段
 func (r *ProductStore) QuickUpdate(id string, fields map[string]interface{}) error {
 	return r.db.Model(&productdomain.Product{}).Where("id = ? AND deleted_at IS NULL", id).Updates(fields).Error
+}
+
+// CompareAndSetProductActive applies an AI-approved publication change only
+// when the persisted product still matches the original approval snapshot.
+func (r *ProductStore) CompareAndSetProductActive(id string, snapshot time.Time, wasActive bool, wasPrice money.Amount, target bool) (bool, error) {
+	result := r.db.Model(&productdomain.Product{}).
+		Where("id = ? AND deleted_at IS NULL AND updated_at = ? AND is_active = ? AND price_amount = ?",
+			id, snapshot, wasActive, wasPrice).
+		Updates(map[string]interface{}{"is_active": target, "updated_at": time.Now().UTC()})
+	return result.RowsAffected == 1, result.Error
 }
 
 // Delete 删除商品

@@ -110,7 +110,7 @@ type Draft struct {
 }
 
 func (h *Handler) makeServer(key *aidomain.Key, token, resource string) *mcp.Server {
-	server := mcp.NewServer(&mcp.Implementation{Name: "dujiao-next", Version: "2.0.0"}, nil)
+	server := mcp.NewServer(&mcp.Implementation{Name: "dujiao-next", Version: "3.0.0"}, nil)
 	check := func(ctx context.Context, scope, tool string) error {
 		current, err := h.services.AiAccessService.AuthenticateMCP(ctx, token, resource)
 		if err != nil || !aiapp.HasScope(current.Scopes, scope) {
@@ -275,5 +275,6 @@ func (h *Handler) makeServer(key *aidomain.Key, token, resource string) *mcp.Ser
 				},
 			}, nil
 		})
+	h.registerWriteTools(server, key, check)
 	return server
 }

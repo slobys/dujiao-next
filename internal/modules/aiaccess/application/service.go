@@ -23,6 +23,8 @@ const (
 	ScopeCatalog   = "catalog:read"
 	ScopeInventory = "inventory:read"
 	ScopeReport    = "report:read"
+	ScopeDraftWrite = "catalog:draft:write"
+	ScopePublishRequest = "catalog:publish:request"
 )
 
 var (
@@ -30,7 +32,7 @@ var (
 	ErrNotFound      = errors.New("AI credential not found")
 	ErrNotAuthorized = errors.New("AI credential invalid, revoked, expired or missing scope")
 	keyPattern       = regexp.MustCompile(`^djai_([0-9a-f]{16})_([0-9a-f]{64})$`)
-	permitted        = map[string]bool{ScopeCatalog: true, ScopeInventory: true, ScopeReport: true}
+	permitted        = map[string]bool{ScopeCatalog: true, ScopeInventory: true, ScopeReport: true, ScopeDraftWrite: true, ScopePublishRequest: true}
 )
 
 type Service struct {
@@ -54,7 +56,7 @@ func validCredentialName(name string) bool {
 }
 
 func parseScopes(raw []string) (string, error) {
-	if len(raw) < 1 || len(raw) > 3 {
+	if len(raw) < 1 || len(raw) > len(permitted) {
 		return "", ErrInvalid
 	}
 	unique := map[string]bool{}

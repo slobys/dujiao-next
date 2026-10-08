@@ -4,6 +4,7 @@ import (
 	"github.com/dujiao-next/internal/app/container"
 	"github.com/dujiao-next/internal/app/httpserver/middleware"
 	affiliatebootstrap "github.com/dujiao-next/internal/bootstrap/affiliate"
+	aiaccessactions "github.com/dujiao-next/internal/bootstrap/aiaccessactions"
 	settingsbootstrap "github.com/dujiao-next/internal/bootstrap/settingshttp"
 	"github.com/dujiao-next/internal/config"
 	adproxytransport "github.com/dujiao-next/internal/modules/adproxy/transport/http"
@@ -143,6 +144,7 @@ func registerAdminRoutes(
 	// 权限管理
 	aiaccesshttp.RegisterAdminRoutes(authorized, aiaccesshttp.NewAdminHandler(c.AiAccessService))
 	aiaccesshttp.RegisterRemoteAdminRoutes(authorized, aiaccesshttp.NewRemoteAdminHandler(c.AiRemoteService))
+	aiaccessactions.RegisterAdminRoutes(authorized, c)
 	adminauthztransport.RegisterAdminRoutes(authorized, adminAuthzHandler)
 	auditlogtransport.RegisterAdminRoutes(authorized, adminAuditLogHandler)
 	authorized.GET("/authz/permissions/catalog", func(ctx *gin.Context) {

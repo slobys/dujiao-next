@@ -7,7 +7,7 @@ import { notifyError } from '@/utils/notify'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 
-type Scope = 'catalog:read' | 'inventory:read' | 'report:read'
+type Scope = 'catalog:read' | 'inventory:read' | 'report:read' | 'catalog:draft:write' | 'catalog:publish:request'
 type Request = {
   id: string
   client_id: string
@@ -21,6 +21,8 @@ const text = {
     title: '授权 AI 连接商城', subtitle: '请确认连接的 AI 工具和权限。批准后它只能访问勾选的数据，不会获得管理员登录权限。',
     client: '请求连接的应用', redirect: '连接后将返回', perms: '授予以下只读权限',
     catalog: '查看商品与分类', inventory: '查看库存预警', report: '查看营业汇总',
+    draftWrite: '自动创建默认下架的商品草稿（无需每次审批）', publishRequest: '申请商品上架/下架（每次必须人工批准）',
+    writeWarning: '写入权限默认不勾选。只有你确认信任这个 AI 客户端时才授予，商品上架仍需后台逐次批准。',
     approve: '批准并连接', cancel: '取消', fail: '连接请求已经过期或无效，请返回 AI 工具重试。',
     none: '至少选择一个权限', risk: '确认这是你主动发起的连接。如果你不认识此客户端或返回地址，请拒绝。',
     loading: '正在检查请求…', done: '已授权，正在返回 AI 工具…',
@@ -29,6 +31,8 @@ const text = {
     title: '授權 AI 連接商城', subtitle: '請確認 AI 工具及權限。批准後僅可讀取勾選資料，不會取得管理員登入權限。',
     client: '請求連接的應用', redirect: '連接後返回', perms: '授予以下唯讀權限',
     catalog: '查看商品與分類', inventory: '查看庫存警示', report: '查看營業摘要',
+    draftWrite: '自動建立未上架商品草稿', publishRequest: '申請上架/下架（每次需人工批准）',
+    writeWarning: '寫入權限預設不勾選。只在信任 AI 客戶端時授予，商品上架仍需逐次批准。',
     approve: '批准並連接', cancel: '取消', fail: '授權要求已過期或無效，請返回 AI 工具重試。',
     none: '請至少選取一項權限', risk: '請確認這是你主動發起的連接。不認識的應用或返回網址應拒絕。',
     loading: '正在檢查請求…', done: '已授權，正在返回 AI 工具…',
@@ -37,6 +41,8 @@ const text = {
     title: 'Authorize an AI connection', subtitle: 'Review the client and its permissions. It will not receive an admin JWT or your admin password.',
     client: 'Client requesting access', redirect: 'Return address', perms: 'Grant read-only access',
     catalog: 'Products and categories', inventory: 'Inventory alerts', report: 'Sales summary',
+    draftWrite: 'Create unpublished product drafts automatically', publishRequest: 'Request product publish/unpublish (always requires human approval)',
+    writeWarning: 'Write scopes are unchecked by default. Only grant them to AI clients you trust; publishing still requires separate approval.',
     approve: 'Approve and connect', cancel: 'Cancel', fail: 'Authorization expired or invalid. Restart the connection from your AI tool.',
     none: 'Select at least one scope', risk: 'Only approve connections you initiated. Reject unrecognized apps or return addresses.',
     loading: 'Checking request…', done: 'Authorized. Returning to your AI client…',
@@ -52,7 +58,8 @@ const busy = ref(true)
 const error = ref('')
 const complete = ref(false)
 const scopeLabel = (scope: Scope) =>
-  scope === 'catalog:read' ? l.value.catalog : scope === 'inventory:read' ? l.value.inventory : l.value.report
+  scope === 'catalog:read' ? l.value.catalog : scope === 'inventory:read' ? l.value.inventory :
+  scope === 'report:read' ? l.value.report : scope === 'catalog:draft:write' ? l.value.draftWrite : l.value.publishRequest
 const toggle = (scope: Scope, enabled: boolean) => {
   checked.value = enabled ? Array.from(new Set([...checked.value, scope])) : checked.value.filter(v => v !== scope)
 }
@@ -63,7 +70,8 @@ const fetchRequest = async () => {
     const response = await adminAPI.getAiOAuthRequest(id)
     details.value = response.data?.data || null
     if (!details.value) { error.value = l.value.fail; return }
-    checked.value = [...details.value.scopes]
+    // Important: a client's requested write scope NEVER becomes pre-approved.
+    checked.value = details.value.scopes.filter(s => s === 'catalog:read' || s === 'inventory:read' || s === 'report:read')
   } catch {
     error.value = l.value.fail
   } finally {
@@ -133,6 +141,7 @@ onMounted(fetchRequest)
               <span class="text-sm">{{ scopeLabel(scope) }}</span>
             </label>
           </fieldset>
+          <p v-if="details.scopes.some(s => s === 'catalog:draft:write' || s === 'catalog:publish:request')" class="rounded-lg border p-3 text-sm text-muted-foreground">{{ l.writeWarning }}</p>
           <p class="rounded-lg border p-3 text-sm text-muted-foreground">{{ l.risk }}</p>
           <div class="flex flex-wrap gap-3">
             <Button :disabled="busy || checked.length === 0" @click="approve">{{ l.approve }}</Button>

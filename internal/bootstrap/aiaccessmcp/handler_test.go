@@ -44,13 +44,13 @@ func fixture(t *testing.T) (*container.Container, *app.Service, *app.RemoteServi
 	sqlDB, _ := db.DB()
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err = db.AutoMigrate(&domain.Key{}, &domain.Audit{}, &domain.RemoteConfig{}, &domain.OAuthClient{}, &domain.AuthorizationRequest{}, &domain.OAuthRefresh{}); err != nil {
+	if err = db.AutoMigrate(&domain.Key{}, &domain.Audit{}, &domain.RemoteConfig{}, &domain.OAuthClient{}, &domain.AuthorizationRequest{}, &domain.OAuthRefresh{}, &domain.ActionRequest{}); err != nil {
 		t.Fatal(err)
 	}
 	store := gormstore.New(db)
 	keys := app.New(store)
 	remote := app.NewRemote(store, keys)
-	return &container.Container{AiAccessService: keys, AiRemoteService: remote}, keys, remote
+	return &container.Container{AiAccessService: keys, AiRemoteService: remote, AiActionService: app.NewActions(store)}, keys, remote
 }
 func issueOAuthToken(t *testing.T, remote *app.RemoteService, scopes string) string {
 	t.Helper()
@@ -171,6 +171,9 @@ func TestOfficialGoSDKConnectAndPreview(t *testing.T) {
 	}
 	if names["daily_sales_summary"] || names["list_inventory_alerts"] {
 		t.Fatalf("exposed ungranted tools: %v", names)
+	}
+	if names["create_product_draft"] || names["request_product_status_change"] {
+		t.Fatalf("write tools exposed without explicit consent: %v", names)
 	}
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "preview_product_draft",

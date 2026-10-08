@@ -145,7 +145,9 @@ func hashOpaque(raw string) string {
 	h := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(h[:])
 }
-func DefaultOAuthScopes() []string { return []string{ScopeCatalog, ScopeInventory, ScopeReport} }
+// The client may request the full supported list, but the consent UI must
+// default all write/request scopes to unchecked; scope grants are user-controlled.
+func DefaultOAuthScopes() []string { return []string{ScopeCatalog, ScopeInventory, ScopeReport, ScopeDraftWrite, ScopePublishRequest} }
 func oauthScopes(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {

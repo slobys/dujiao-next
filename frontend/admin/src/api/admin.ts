@@ -618,6 +618,9 @@ export const adminAPI = {
   getAiOAuthRequest: (id: string) => api.get(`/admin/ai-access/oauth/requests/${encodeURIComponent(id)}`),
   approveAiOAuth: (data: { request_id: string; scopes: string[] }) => api.post('/admin/ai-access/oauth/approve', data),
   denyAiOAuth: (id: string) => api.post('/admin/ai-access/oauth/deny', { request_id: id }),
+  listAiActions: () => api.get('/admin/ai-access/actions'),
+  approveAiAction: (id: string) => api.post(`/admin/ai-access/actions/${encodeURIComponent(id)}/approve`),
+  rejectAiAction: (id: string) => api.post(`/admin/ai-access/actions/${encodeURIComponent(id)}/reject`),
 
   // Channel Clients (Bot Clients)
   getChannelClients: () => api.get('/admin/channel-clients'),
