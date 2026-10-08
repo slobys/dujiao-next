@@ -300,11 +300,67 @@ run_update() {
   info "fork 已更新，配置与数据保持不变。"
 }
 
+menu_command_for() {
+  case "${1:-}" in
+    1) printf 'install' ;;
+    2) printf 'status' ;;
+    3) printf 'logs' ;;
+    4) printf 'backup' ;;
+    5) printf 'update' ;;
+    6) printf 'restart' ;;
+    7) printf 'help' ;;
+    0|q|Q) printf 'exit' ;;
+    *) return 1 ;;
+  esac
+}
+
+run_menu() {
+  [[ -r /dev/tty && -w /dev/tty ]] || die "交互菜单需要真实终端；自动化请使用 dujiao-fork <命令>。"
+  local choice action
+  while true; do
+    cat >/dev/tty <<'MENU'
+
+========== Dujiao-Next Fork 管理 ==========
+  1) 一键安装 / 恢复安装
+  2) 查看服务状态
+  3) 查看运行日志
+  4) 立即冷备份（会短暂停止服务）
+  5) 更新源码并构建（先备份）
+  6) 重启服务
+  7) 命令帮助
+  0) 退出
+===========================================
+MENU
+    printf '请输入编号: ' >/dev/tty
+    IFS= read -r choice </dev/tty || return 0
+    if ! action=$(menu_command_for "$choice"); then
+      info "无效的菜单编号：请使用 0-7。"
+      continue
+    fi
+    [[ "$action" != "exit" ]] || return 0
+    execute_command "$action"
+  done
+}
+
+execute_command() {
+  case "$1" in
+    install) run_install ;;
+    update) run_update ;;
+    status) require_installed; compose ps ;;
+    logs) require_installed; compose logs --no-color --tail=120 app redis ;;
+    restart) require_installed; compose restart; wait_for_health || die "重启后健康检查未通过。" ;;
+    backup) run_backup ;;
+    help) usage ;;
+    *) die "未知操作。";;
+  esac
+}
+
 usage() {
   cat <<'HELP'
 Dujiao-Next fork Docker 管理器
-用法：sudo bash fork-deploy.sh install|update|status|logs|restart|backup|help
-      成功安装后也可运行：sudo dujiao-fork <命令>
+用法：sudo bash fork-deploy.sh [menu|install|update|status|logs|restart|backup|help]
+      成功安装后可运行：sudo dujiao-fork （无参数打开交互菜单）
+      也支持：sudo dujiao-fork <命令> （供自动化脚本调用）
 
 首次安装可指定：
   DUJIAO_BIND=127.0.0.1  (默认，仅本机监听；使用 HTTPS 反向代理)
@@ -315,10 +371,10 @@ HELP
 }
 
 main() {
-  local command="${1:-help}"
+  local command="${1:-menu}"
   case "$command" in
     help|-h|--help) usage; return ;;
-    install|update|status|logs|restart|backup) ;;
+    menu|install|update|status|logs|restart|backup) ;;
     *) usage; die "未知命令：$command" ;;
   esac
   require_root
@@ -327,14 +383,11 @@ main() {
   exec 9>/run/dujiao-next-fork-manager.lock
   flock -n 9 || die "已有另一个 fork 管理进程在运行。"
   trap cleanup EXIT
-  case "$command" in
-    install) run_install ;;
-    update) run_update ;;
-    status) require_installed; compose ps ;;
-    logs) require_installed; compose logs --no-color --tail=120 app redis ;;
-    restart) require_installed; compose restart; wait_for_health || die "重启后健康检查未通过。" ;;
-    backup) run_backup ;;
-  esac
+  if [[ "$command" == "menu" ]]; then
+    run_menu
+  else
+    execute_command "$command"
+  fi
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

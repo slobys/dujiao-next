@@ -33,6 +33,22 @@ reject "rejects system port" validate_port 80
 reject "rejects invalid high port" validate_port 65536
 reject "rejects nonsensical port" validate_port '18080:80'
 
+menu_expected=(install status logs backup update restart help exit)
+menu_codes=(1 2 3 4 5 6 7 0)
+for i in "${!menu_codes[@]}"; do
+  actual=$(menu_command_for "${menu_codes[$i]}")
+  if [[ "$actual" == "${menu_expected[$i]}" ]]; then
+    pass "menu choice ${menu_codes[$i]} resolves to ${menu_expected[$i]}"
+  else
+    fail "menu choice ${menu_codes[$i]} resolves to ${menu_expected[$i]}"
+  fi
+done
+if menu_command_for 9 >/dev/null; then
+  fail "menu rejects unknown choices"
+else
+  pass "menu rejects unknown choices"
+fi
+
 password_one=$(random_admin_password)
 password_two=$(random_admin_password)
 path_one=$(random_admin_path)
