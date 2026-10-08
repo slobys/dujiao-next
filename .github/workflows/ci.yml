@@ -61,6 +61,35 @@ jobs:
           assert './scripts/dujiao-next-manager.sh' in files, files
           PY
 
+  mcp:
+    name: Verify universal MCP
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: integrations/mcp/requirements.txt
+
+      - name: Install official MCP SDK
+        run: python -m pip install -r integrations/mcp/requirements.txt
+
+      - name: Validate MCP tools, redaction and stdio handshake
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python -m unittest discover -s integrations/mcp/tests -v
+
+      - name: Run existing OpenClaw integration regression tests
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python -m unittest discover -s integrations/openclaw/dujiao-next/tests -v
+
   api:
     name: Verify API
     runs-on: ubuntu-latest

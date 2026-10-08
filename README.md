@@ -4,9 +4,9 @@
 
 [![CI](https://github.com/slobys/dujiao-next/actions/workflows/ci.yml/badge.svg)](https://github.com/slobys/dujiao-next/actions/workflows/ci.yml) [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE) [![Docker Compose](https://img.shields.io/badge/Deploy-Docker%20Compose-2496ED?logo=docker&logoColor=white)](scripts/fork-deploy.sh)
 
-> **本仓库是个人维护的 Fork，并非上游官方发行版。** 已提供菜单式部署工具和第一阶段 OpenClaw / n8n 集成示例。AI 操作仅涵盖安全的商品草稿和汇总查询，尚不支持自动发布页面或长期机器令牌；部署与集成已做本地自动化测试，仍需在目标服务器验证。
+> **本仓库是个人维护的 Fork，并非上游官方发行版。** 已提供菜单式部署工具、OpenClaw/n8n 集成，以及适用于 OpenClaw、Codex、Claude Code 的第一阶段通用 MCP 服务。通用 MCP 目前只读和离线预览商品草稿，尚未提供 AI 长期服务令牌、商品自主上架或自动发布网站代码。所有集成尚需在真实商城以限权账号进行授权与联调。
 
-**快速导航：** [一键部署](#-一键部署本-fork) · [管理与更新](#-日常管理) · [数据与备份](#-数据与备份) · [AI 接入](#-ai-接入openclaw--n8n-第一阶段) · [开发指南](#-本地开发) · [与上游的区别](#-与上游的区别)
+**快速导航：** [一键部署](#-一键部署本-fork) · [管理与更新](#-日常管理) · [数据与备份](#-数据与备份) · [通用 MCP 接入](integrations/mcp/README.md) · [AI 接入](#-ai-接入openclaw--n8n-第一阶段) · [开发指南](#-本地开发) · [与上游的区别](#-与上游的区别)
 
 ## ✨ 主要功能
 
@@ -18,6 +18,7 @@
 | 数据存储 | SQLite 或 PostgreSQL；Redis 用于缓存与异步任务（来自上游） |
 | **Fork 增强** | **独立 Docker Compose 源码一键部署、数据持久化、状态/日志/重启、冷备份、源码更新** |
 | **AI 初版** | **OpenClaw 商品/库存只读查询、下架草稿创建、经营报表与 n8n 定时 Telegram 推送模板** |
+| **通用 MCP 初版** | **Codex、Claude Code、OpenClaw 共享安全只读商品/库存/营业报表工具及离线商品草稿预览** |
 
 ## 🚀 一键部署（本 Fork）
 
@@ -211,6 +212,14 @@ sudo env DUJIAO_FORK_DIR=/opt/my-dujiao \
 后续管理命令若使用自定义目录，也需传入同样的 `DUJIAO_FORK_DIR`。不要手工将已有数据文件夹直接覆盖到新安装目录；旧站迁移应单独执行。
 
 ## 🤖 AI 接入（OpenClaw / n8n 第一阶段）
+
+### 推荐：通用 MCP（Codex / Claude Code / OpenClaw）
+
+已经新增 [**统一 MCP 接入指南（NAS、Windows、Codex、Claude Code、OpenClaw）**](integrations/mcp/README.md) 和 [MCP 服务程序](integrations/mcp/server.py)。此方案使用官方 MCP Python SDK，所有 AI 工具共享同一套只读 API：商品、分类、库存预警、营业日报与**离线草稿预览**。MCP 工具不会新建、发布或修改线上商品，也不会返回卡密和客户私密数据。安装 Python 虚拟环境并设置受限后台凭据即可接入；不需要重建商城 Docker 镜像。
+
+**注意：** MCP 基于现有后台 JWT 和 RBAC，当前没有长期稳定的受限机器密钥；2FA/CAPTCHA 不能被自动绕过。跨机器连接必须通过 HTTPS 或安全隧道，不允许把管理员密钥发给 AI 或把无认证 MCP 端口暴露到公网。
+
+### 旧版：OpenClaw Skill / n8n 独立脚本
 
 新增本 Fork 的 [OpenClaw 技能](integrations/openclaw/dujiao-next/SKILL.md)、[Python 管理命令](integrations/openclaw/dujiao-next/dujiao.py) 和 [n8n 每日报表示例](integrations/openclaw/n8n-daily-telegram.json)。此阶段复用商城自带的后台 API，不修改支付、退款和数据库核心逻辑。
 
