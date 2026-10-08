@@ -20,14 +20,15 @@ import (
 )
 
 const (
-	ScopeCatalog            = "catalog:read"
-	ScopeInventory          = "inventory:read"
-	ScopeReport             = "report:read"
-	ScopeDraftWrite         = "catalog:draft:write"
-	ScopePublishRequest     = "catalog:publish:request"
-	ScopeOrdersRead         = "orders:read"
-	ScopeOrderReviewRequest = "orders:review:request"
-	ScopeOrderCancelRequest = "orders:cancel:request"
+	ScopeCatalog             = "catalog:read"
+	ScopeInventory           = "inventory:read"
+	ScopeReport              = "report:read"
+	ScopeDraftWrite          = "catalog:draft:write"
+	ScopePublishRequest      = "catalog:publish:request"
+	ScopeOrdersRead          = "orders:read"
+	ScopeOrderReviewRequest  = "orders:review:request"
+	ScopeOrderCancelRequest  = "orders:cancel:request"
+	ScopeWalletRefundRequest = "orders:wallet-refund:request"
 )
 
 var (
@@ -35,7 +36,7 @@ var (
 	ErrNotFound      = errors.New("AI credential not found")
 	ErrNotAuthorized = errors.New("AI credential invalid, revoked, expired or missing scope")
 	keyPattern       = regexp.MustCompile(`^djai_([0-9a-f]{16})_([0-9a-f]{64})$`)
-	permitted        = map[string]bool{ScopeCatalog: true, ScopeInventory: true, ScopeReport: true, ScopeDraftWrite: true, ScopePublishRequest: true, ScopeOrdersRead: true, ScopeOrderReviewRequest: true, ScopeOrderCancelRequest: true}
+	permitted        = map[string]bool{ScopeCatalog: true, ScopeInventory: true, ScopeReport: true, ScopeDraftWrite: true, ScopePublishRequest: true, ScopeOrdersRead: true, ScopeOrderReviewRequest: true, ScopeOrderCancelRequest: true, ScopeWalletRefundRequest: true}
 )
 
 type Service struct {

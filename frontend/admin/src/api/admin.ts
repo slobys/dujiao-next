@@ -628,6 +628,9 @@ export const adminAPI = {
   listAiOrderCancellations: () => api.get('/admin/ai-access/order-cancellations'),
   approveAiOrderCancellation: (id: string) => api.post(`/admin/ai-access/order-cancellations/${encodeURIComponent(id)}/approve`),
   rejectAiOrderCancellation: (id: string) => api.post(`/admin/ai-access/order-cancellations/${encodeURIComponent(id)}/reject`),
+  listAiWalletRefunds: () => api.get('/admin/ai-access/wallet-refunds'),
+  approveAiWalletRefund: (id: string) => api.post(`/admin/ai-access/wallet-refunds/${encodeURIComponent(id)}/approve`),
+  rejectAiWalletRefund: (id: string) => api.post(`/admin/ai-access/wallet-refunds/${encodeURIComponent(id)}/reject`),
 
   // Channel Clients (Bot Clients)
   getChannelClients: () => api.get('/admin/channel-clients'),

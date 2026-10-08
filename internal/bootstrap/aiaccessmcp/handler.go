@@ -277,5 +277,6 @@ func (h *Handler) makeServer(key *aidomain.Key, token, resource string) *mcp.Ser
 		})
 	h.registerWriteTools(server, key, check)
 	h.registerOrderTools(server, key, check)
+	h.registerWalletRefundTools(server, key, check)
 	return server
 }

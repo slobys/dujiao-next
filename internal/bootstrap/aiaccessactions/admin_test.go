@@ -54,7 +54,7 @@ func actionHTTPFixture(t *testing.T) (*container.Container, *app.Actions, *domai
 	sqlDB, _ := db.DB()
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err = db.AutoMigrate(&domain.Key{}, &domain.Audit{}, &domain.OAuthRefresh{}, &domain.RemoteConfig{}, &domain.ActionRequest{}, &domain.OrderCancellation{}); err != nil {
+	if err = db.AutoMigrate(&domain.Key{}, &domain.Audit{}, &domain.OAuthRefresh{}, &domain.RemoteConfig{}, &domain.ActionRequest{}, &domain.OrderCancellation{}, &domain.WalletRefundRequest{}); err != nil {
 		t.Fatal(err)
 	}
 	store := gormstore.New(db)

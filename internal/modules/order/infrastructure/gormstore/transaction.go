@@ -131,6 +131,21 @@ func (tx transaction) HasAnySettlementArtifactsForOrder(orderID uint) (bool, err
 	return false, nil
 }
 
+// HasAnyPaymentAttemptsForWalletRefund blocks AI money movement if any
+// third-party payment attempt exists, including soft-deleted history.
+// It executes against the order's SAME locked transaction.
+func (tx transaction) HasAnyPaymentAttemptsForWalletRefund(id uint) (bool, error) {
+	if id == 0 {
+		return true, nil
+	}
+	var count int64
+	if err := tx.db.Unscoped().Model(&paymentdomain.Payment{}).
+		Where("order_id = ?", id).Count(&count).Error; err != nil {
+		return true, err
+	}
+	return count > 0, nil
+}
+
 func (tx transaction) ExpirePendingPaymentsByOrderIDs(orderIDs []uint, expiredAt time.Time) (int64, error) {
 	if len(orderIDs) == 0 {
 		return 0, nil

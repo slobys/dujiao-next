@@ -92,6 +92,7 @@ func AutoMigrate() error {
 		&aiaccessdomain.ActionRequest{},
 		&aiaccessdomain.OrderReview{},
 		&aiaccessdomain.OrderCancellation{},
+		&aiaccessdomain.WalletRefundRequest{},
 		&siteconnectiondomain.Connection{},
 		&mappingdomain.Mapping{},
 		&mappingdomain.SKUMapping{},

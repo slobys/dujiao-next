@@ -545,6 +545,12 @@ const navGroups = computed<NavGroup[]>(() => {
           permission: 'GET:/admin/ai-access/order-cancellations',
         },
         {
+          label: t('admin.navItems.aiWalletRefunds'),
+          to: '/ai-wallet-refunds',
+          icon: WalletCards,
+          permission: 'GET:/admin/ai-access/wallet-refunds',
+        },
+        {
           label: t('admin.navItems.authzAudit'),
           to: '/authz-audit-logs',
           icon: ScrollText,

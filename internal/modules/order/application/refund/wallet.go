@@ -1,6 +1,7 @@
 package refund
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -27,12 +28,90 @@ type AdminRefundToWalletInput struct {
 	Remark  string
 }
 
+// All AI wallet refund eligibility checks MUST share the locked order transaction.
+// If the selected store cannot query historical online payment attempts from
+// the same transaction, the money-moving operation fails closed.
+type aiWalletPaymentInspector interface {
+	HasAnyPaymentAttemptsForWalletRefund(uint) (bool, error)
+}
+
+// AIWalletRefundSnapshot is an immutable human-review snapshot. It is never
+// passed to the model in full; only sanitized monetary fields are exposed.
+// AI wallet credit is permitted only for an originally ALL-WALLET-paid,
+// registered, standalone order. Online/provider refunds are excluded.
+type AIWalletRefundSnapshot struct {
+	OrderID        uint
+	OrderNo        string
+	Currency       string
+	Status         string
+	TotalAmount    string
+	RefundedAmount string
+	UpdatedAt      time.Time
+}
+
+var ErrAIWalletRefundUnsafe = errors.New("AI wallet refund preconditions failed")
+
+// AIWalletRefundEligible is a conservative merchant-level preflight.
+// The same checks run again on a locked order inside the credit transaction.
+func AIWalletRefundEligible(order *orderdomain.Order, snap AIWalletRefundSnapshot, refund money.Amount) bool {
+	if order == nil || order.ID == 0 || order.ID != snap.OrderID ||
+		order.OrderNo != snap.OrderNo || order.Currency != "CNY" || order.Currency != snap.Currency ||
+		order.Status != snap.Status || order.UpdatedAt.IsZero() ||
+		!order.UpdatedAt.Equal(snap.UpdatedAt) || order.TotalAmount.String() != snap.TotalAmount ||
+		order.RefundedAmount.String() != snap.RefundedAmount ||
+		order.UserID == 0 || order.PaidAt == nil || order.ParentID != nil || len(order.Children) != 0 ||
+		order.CouponID != nil || order.AffiliateProfileID != nil || order.AffiliateCode != "" ||
+		order.ResellerID != nil || order.ResellerDomain != "" ||
+		order.OnlinePaidAmount.Decimal.Sign() != 0 ||
+		!order.WalletPaidAmount.Decimal.Round(2).Equal(order.TotalAmount.Decimal.Round(2)) ||
+		order.TotalAmount.Decimal.Sign() <= 0 ||
+		order.RefundedAmount.Decimal.IsNegative() {
+		return false
+	}
+	switch order.Status {
+	case constants.OrderStatusPaid, constants.OrderStatusFulfilling,
+		constants.OrderStatusDelivered, constants.OrderStatusCompleted,
+		constants.OrderStatusPartiallyRefunded:
+	default:
+		return false
+	}
+	max := decimal.RequireFromString("500.00")
+	remaining := order.TotalAmount.Decimal.Sub(order.RefundedAmount.Decimal).Round(2)
+	amount := refund.Decimal
+	if amount.Exponent() < -2 || amount.Sign() <= 0 || amount.GreaterThan(max) || amount.GreaterThan(remaining) {
+		return false
+	}
+	return true
+}
+
+// AdminRefundWalletForAI uses the existing native wallet credit workflow and
+// protects it with the EXACT approved snapshot INSIDE the same transaction.
+// The request ID generates a stable wallet accounting reference for manual
+// crash reconciliation. Approval/replay protection occurs in AI queue first.
+func (s *Service) AdminRefundWalletForAI(
+	input AdminRefundToWalletInput, snap AIWalletRefundSnapshot, requestID string,
+) (*orderdomain.Order, *walletdomain.Transaction, *orderdomain.OrderRefundRecord, error) {
+	if len(requestID) != 32 {
+		return nil, nil, nil, ErrAIWalletRefundUnsafe
+	}
+	for _, c := range requestID {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return nil, nil, nil, ErrAIWalletRefundUnsafe
+		}
+	}
+	if input.OrderID != snap.OrderID {
+		return nil, nil, nil, ErrAIWalletRefundUnsafe
+	}
+	return s.adminRefundToWallet(input, &snap, fmt.Sprintf("order:%d:ai_wallet_refund:%s", input.OrderID, requestID))
+}
+
 // AdminRefundToWallet executes the order refund workflow and delegates only
 // the account credit to Wallet. Order state, refund records, affiliate
 // reversals, and reseller accounting remain owned by the order context.
-func (s *Service) AdminRefundToWallet(
-	input AdminRefundToWalletInput,
-) (*orderdomain.Order, *walletdomain.Transaction, *orderdomain.OrderRefundRecord, error) {
+func (s *Service) AdminRefundToWallet(input AdminRefundToWalletInput) (*orderdomain.Order, *walletdomain.Transaction, *orderdomain.OrderRefundRecord, error) {
+	return s.adminRefundToWallet(input, nil, "")
+}
+func (s *Service) adminRefundToWallet(input AdminRefundToWalletInput, snap *AIWalletRefundSnapshot, ref string) (*orderdomain.Order, *walletdomain.Transaction, *orderdomain.OrderRefundRecord, error) {
 	if input.OrderID == 0 {
 		return nil, nil, nil, ErrOrderNotFound
 	}
@@ -50,6 +129,9 @@ func (s *Service) AdminRefundToWallet(
 		walletRemark = "管理员退款到余额"
 	}
 	reference := fmt.Sprintf("order:%d:admin_refund:%d", input.OrderID, time.Now().UnixNano())
+	if ref != "" {
+		reference = ref
+	}
 	var (
 		transactionResult  *walletdomain.Transaction
 		refundRecordResult *orderdomain.OrderRefundRecord
@@ -66,7 +148,13 @@ func (s *Service) AdminRefundToWallet(
 
 	err := s.orderStore.WithinTransaction(func(tx ordercontract.Transaction) error {
 		orderRepository := tx.Orders()
-		locked, err := orderRepository.GetByIDForUpdate(input.OrderID)
+		var locked *orderdomain.Order
+		var err error
+		if snap != nil {
+			locked, err = orderRepository.GetByIDForUpdateWithChildren(input.OrderID)
+		} else {
+			locked, err = orderRepository.GetByIDForUpdate(input.OrderID)
+		}
 		if err != nil {
 			return err
 		}
@@ -74,6 +162,19 @@ func (s *Service) AdminRefundToWallet(
 			return ErrOrderNotFound
 		}
 		order := *locked
+		if snap != nil && !AIWalletRefundEligible(&order, *snap, input.Amount) {
+			return ErrAIWalletRefundUnsafe
+		}
+		if snap != nil {
+			inspector, ok := tx.(aiWalletPaymentInspector)
+			if !ok {
+				return ErrAIWalletRefundUnsafe
+			}
+			exists, err := inspector.HasAnyPaymentAttemptsForWalletRefund(order.ID)
+			if err != nil || exists {
+				return ErrAIWalletRefundUnsafe
+			}
+		}
 		if order.UserID == 0 {
 			return walletcontract.ErrNotSupportedForGuest
 		}

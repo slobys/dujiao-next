@@ -15,8 +15,10 @@ import (
 	aidomain "github.com/dujiao-next/internal/modules/aiaccess/domain"
 	productwrite "github.com/dujiao-next/internal/modules/catalog/product/application/write"
 	orderapp "github.com/dujiao-next/internal/modules/order/application"
+	refundapp "github.com/dujiao-next/internal/modules/order/application/refund"
 	ordercontract "github.com/dujiao-next/internal/modules/order/contract"
 	orderdomain "github.com/dujiao-next/internal/modules/order/domain"
+	"github.com/dujiao-next/internal/shared/money"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/shopspring/decimal"
 )
@@ -361,6 +363,115 @@ func (h *Handler) registerStrictUnpaidCancellationTools(server *mcp.Server, key 
 			"expires_at": req.ExpiresAt, "completed_at": req.CompletedAt,
 			"failure_code":    req.FailureCode,
 			"refund_executed": false,
+		}, nil
+	})
+}
+
+// AI can propose a wallet refund but cannot credit money. The only permitted
+// target is a registered CNY wallet from a fully wallet-paid order, limited
+// to 500 CNY per request; each request requires explicit admin approval.
+type WalletRefundInput struct {
+	OrderID uint   `json:"order_id"`
+	Amount  string `json:"amount"`
+	Reason  string `json:"reason,omitempty"`
+}
+
+func (h *Handler) registerWalletRefundTools(server *mcp.Server, key *aidomain.Key, check scopeCheck) {
+	if !aiapp.HasScope(key.Scopes, aiapp.ScopeWalletRefundRequest) {
+		return
+	}
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "preview_strict_wallet_refund",
+		Description: "Read-only eligibility preview for a possible CNY wallet-balance credit, NOT a refund to the original payment channel. Never reveals customer identities or wallet balances; final approval and locked refund checks are still required.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in WalletRefundInput) (*mcp.CallToolResult, map[string]any, error) {
+		if err := check(ctx, aiapp.ScopeWalletRefundRequest, "preview_strict_wallet_refund"); err != nil {
+			return nil, nil, err
+		}
+		if in.OrderID == 0 {
+			return nil, nil, errors.New("invalid order id")
+		}
+		amount, err := decimal.NewFromString(in.Amount)
+		if err != nil || amount.Exponent() < -2 {
+			return nil, nil, errors.New("invalid refund amount")
+		}
+		order, err := h.services.OrderStore.GetByID(in.OrderID)
+		if err != nil || order == nil {
+			return nil, nil, errors.New("order unavailable")
+		}
+		snap := refundapp.AIWalletRefundSnapshot{
+			OrderID: order.ID, OrderNo: order.OrderNo, Currency: order.Currency,
+			Status: order.Status, TotalAmount: order.TotalAmount.String(),
+			RefundedAmount: order.RefundedAmount.String(), UpdatedAt: order.UpdatedAt,
+		}
+		eligible := refundapp.AIWalletRefundEligible(order, snap, money.FromDecimal(amount))
+		return nil, map[string]any{
+			"order_id": order.ID, "currency": order.Currency, "amount": amount.StringFixed(2),
+			"remaining_refundable":   order.TotalAmount.Decimal.Sub(order.RefundedAmount.Decimal).Round(2).StringFixed(2),
+			"eligible_for_request":   eligible,
+			"refund_target":          "originally_wallet_paid_registered_user_wallet_only",
+			"maximum_request_amount": "500.00 CNY", "original_provider_refunded": false,
+			"warning": "Eligibility is not a guarantee. A human must approve; all checks rerun inside the wallet settlement transaction",
+		}, nil
+	})
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "request_strict_wallet_refund",
+		Description: "SUBMIT ONLY a 0.01-500.00 CNY refund-to-wallet proposal for an originally entirely wallet-paid, registered, standalone order. Reason: customer_request, duplicate_purchase, undelivered or other. Actual wallet balance credit happens ONLY if a system administrator individually approves after a new DB-locked eligibility check.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in WalletRefundInput) (*mcp.CallToolResult, map[string]any, error) {
+		if err := check(ctx, aiapp.ScopeWalletRefundRequest, "request_strict_wallet_refund"); err != nil {
+			return nil, nil, err
+		}
+		if in.OrderID == 0 {
+			return nil, nil, errors.New("invalid order id")
+		}
+		amount, err := decimal.NewFromString(in.Amount)
+		if err != nil || amount.Exponent() < -2 {
+			return nil, nil, errors.New("invalid amount")
+		}
+		order, err := h.services.OrderStore.GetByID(in.OrderID)
+		if err != nil || order == nil {
+			return nil, nil, errors.New("order unavailable")
+		}
+		snap := refundapp.AIWalletRefundSnapshot{
+			OrderID: order.ID, OrderNo: order.OrderNo, Currency: order.Currency,
+			Status: order.Status, TotalAmount: order.TotalAmount.String(),
+			RefundedAmount: order.RefundedAmount.String(), UpdatedAt: order.UpdatedAt,
+		}
+		if !refundapp.AIWalletRefundEligible(order, snap, money.FromDecimal(amount)) {
+			return nil, nil, errors.New("wallet-only refund not eligible: use native manual after-sales review")
+		}
+		record, err := h.services.AiWalletRefundService.Submit(ctx, key, aiapp.WalletRefundSnapshot{
+			OrderID: order.ID, OrderNo: order.OrderNo, Currency: order.Currency,
+			Status: order.Status, Total: order.TotalAmount.String(),
+			Refunded: order.RefundedAmount.String(), UpdatedAt: order.UpdatedAt,
+		}, in.Amount, in.Reason)
+		if err != nil {
+			return nil, nil, errors.New("wallet refund request rejected: reason, amount or credential invalid")
+		}
+		return nil, map[string]any{
+			"request_id": record.ID, "order_id": record.OrderID, "amount": record.Amount,
+			"currency": record.Currency, "status": record.Status,
+			"expires_at": record.ExpiresAt, "executed": false,
+			"requires_human_approval": true,
+			"refund_target":           "wallet_balance_not_original_payment_gateway",
+			"wallet_credited":         false,
+		}, nil
+	})
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_wallet_refund_request_status",
+		Description: "Read-only status of your own refund-to-wallet proposal; no personal information or wallet balances.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in ActionLookup) (*mcp.CallToolResult, map[string]any, error) {
+		if err := check(ctx, aiapp.ScopeWalletRefundRequest, "get_wallet_refund_request_status"); err != nil {
+			return nil, nil, err
+		}
+		record, err := h.services.AiWalletRefundService.Owned(ctx, key, in.RequestID)
+		if err != nil {
+			return nil, nil, errors.New("refund request unavailable")
+		}
+		return nil, map[string]any{
+			"request_id": record.ID, "order_id": record.OrderID, "amount": record.Amount,
+			"status": record.Status, "failure_code": record.FailureCode,
+			"expires_at": record.ExpiresAt, "completed_at": record.CompletedAt,
+			"refund_target": "wallet_only", "original_payment_gateway_refunded": false,
 		}, nil
 	})
 }

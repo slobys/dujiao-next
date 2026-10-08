@@ -42,7 +42,7 @@ func testHandler(t *testing.T) (*container.Container, *aidomain.Key, *orderGette
 	sqlDB, _ := db.DB()
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err = db.AutoMigrate(&aidomain.Key{}, &aidomain.Audit{}, &aidomain.OAuthRefresh{}, &aidomain.RemoteConfig{}, &aidomain.OrderReview{}, &aidomain.ActionRequest{}, &aidomain.OrderCancellation{}); err != nil {
+	if err = db.AutoMigrate(&aidomain.Key{}, &aidomain.Audit{}, &aidomain.OAuthRefresh{}, &aidomain.RemoteConfig{}, &aidomain.OrderReview{}, &aidomain.ActionRequest{}, &aidomain.OrderCancellation{}, &aidomain.WalletRefundRequest{}); err != nil {
 		t.Fatal(err)
 	}
 	store := aistore.New(db)
@@ -64,7 +64,7 @@ func testHandler(t *testing.T) (*container.Container, *aidomain.Key, *orderGette
 		GuestEmail: "SENSITIVE@example.test",
 	}}
 	return &container.Container{
-		AiAccessService: keys, AiRemoteService: remote, AiOrderReviewService: reviews, AiOrderCancellationService:aiapp.NewOrderCancellations(store),OrderStore: order,
+		AiAccessService: keys, AiRemoteService: remote, AiOrderReviewService: reviews, AiOrderCancellationService:aiapp.NewOrderCancellations(store),AiWalletRefundService:aiapp.NewWalletRefunds(store),OrderStore: order,
 	}, key, order, reviews
 }
 func orderRequest(t *testing.T, c *container.Container, path string, method string, admin bool) *httptest.ResponseRecorder {

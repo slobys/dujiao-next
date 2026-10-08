@@ -9,6 +9,7 @@ func (c *Container) initServices() {
 	c.AiActionService = aiaccessapp.NewActions(c.AiActionRepo)
 	c.AiOrderReviewService = aiaccessapp.NewOrderReviews(c.AiOrderReviewRepo)
 	c.AiOrderCancellationService = aiaccessapp.NewOrderCancellations(c.AiOrderCancellationRepo)
+	c.AiWalletRefundService = aiaccessapp.NewWalletRefunds(c.AiWalletRefundRepo)
 	c.initPolicyAndSettingServices()
 	c.loadRuntimeSettings()
 	c.initIdentityAndCatalogServices()

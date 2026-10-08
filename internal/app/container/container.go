@@ -96,6 +96,7 @@ type Container struct {
 	AiActionRepo            aiaccesscontract.ActionRepository
 	AiOrderReviewRepo       aiaccesscontract.OrderReviewRepository
 	AiOrderCancellationRepo aiaccesscontract.OrderCancellationRepository
+	AiWalletRefundRepo      aiaccesscontract.WalletRefundRepository
 	UserStore               usercontract.Store
 	ExternalIdentityStore   externalidentitycontract.Store
 	EmailVerificationStore  emailverificationcontract.Store
@@ -143,6 +144,7 @@ type Container struct {
 	AiActionService               *aiaccessapp.Actions
 	AiOrderReviewService          *aiaccessapp.OrderReviews
 	AiOrderCancellationService    *aiaccessapp.OrderCancellations
+	AiWalletRefundService         *aiaccessapp.WalletRefunds
 	AuthService                   *adminauthapp.Service
 	TOTPService                   *admintotpapp.Service
 	UserTOTPService               *usertotpapp.Service

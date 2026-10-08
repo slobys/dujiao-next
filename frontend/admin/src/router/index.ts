@@ -340,6 +340,12 @@ const routes = [
         meta: { permission: 'GET:/admin/ai-access/order-cancellations' },
       },
       {
+        path: 'ai-wallet-refunds',
+        name: 'ai-wallet-refunds',
+        component: () => import('@/views/admin/AiWalletRefunds.vue'),
+        meta: { permission: 'GET:/admin/ai-access/wallet-refunds' },
+      },
+      {
         path: 'ai-authorize',
         name: 'ai-authorize',
         component: () => import('@/views/admin/AiAuthorize.vue'),

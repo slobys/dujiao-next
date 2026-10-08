@@ -2,6 +2,8 @@ package aiaccessorders
 
 import (
 	"context"
+	orderrefund "github.com/dujiao-next/internal/modules/order/application/refund"
+	walletdomain "github.com/dujiao-next/internal/modules/wallet/domain"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -140,5 +142,136 @@ func TestCancelAdminRevocationAndRemoteOffFailClosed(t *testing.T) {
 	}
 	if got := serveCancel(h, path, true); got.Code != 409 {
 		t.Fatal("rejected proposal executed")
+	}
+}
+
+type refundServiceStub struct {
+	calls     int
+	err       error
+	got       orderrefund.AIWalletRefundSnapshot
+	input     orderrefund.AdminRefundToWalletInput
+	requestID string
+}
+
+func (m *refundServiceStub) AdminRefundWalletForAI(input orderrefund.AdminRefundToWalletInput, snap orderrefund.AIWalletRefundSnapshot, id string) (
+	*orderdomain.Order, *walletdomain.Transaction, *orderdomain.OrderRefundRecord, error) {
+	m.calls++
+	m.got = snap
+	m.input = input
+	m.requestID = id
+	if m.err != nil {
+		return nil, nil, nil, m.err
+	}
+	return &orderdomain.Order{ID: input.OrderID, Status: constants.OrderStatusPartiallyRefunded},
+		&walletdomain.Transaction{ID: 11}, &orderdomain.OrderRefundRecord{ID: 12}, nil
+}
+func refundHandlerFixture(t *testing.T) (*WalletRefundHandler, *aidomain.Key, *refundServiceStub, string) {
+	t.Helper()
+	c, _, _, _ := testHandler(t)
+	ctx := context.Background()
+	key, _, err := c.AiAccessService.Create(ctx, "AI wallet", []string{aiapp.ScopeWalletRefundRequest}, 5, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := c.AiWalletRefundService.Submit(ctx, key, aiapp.WalletRefundSnapshot{
+		OrderID: 44, OrderNo: "AI-WALLET-44", Currency: "CNY", Status: "paid",
+		Total: "100.00", Refunded: "0.00", UpdatedAt: time.Now().UTC().Truncate(time.Second),
+	}, "20.00", "customer_request")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &refundServiceStub{}
+	h := NewWalletRefundHandler(c)
+	h.refunds = fake
+	return h, key, fake, record.ID
+}
+func serveRefund(h *WalletRefundHandler, path string, authorized bool) *httptest.ResponseRecorder {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		if authorized {
+			c.Set("admin_id", uint(7))
+		}
+		c.Next()
+	})
+	group := router.Group("/admin")
+	group.POST("/ai-access/wallet-refunds/:id/approve", h.Approve)
+	group.POST("/ai-access/wallet-refunds/:id/reject", h.Reject)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, path, nil))
+	return w
+}
+func TestWalletApprovalRequiresHumanAndCreditsOnce(t *testing.T) {
+	h, key, fake, id := refundHandlerFixture(t)
+	path := "/admin/ai-access/wallet-refunds/" + id + "/approve"
+	if got := serveRefund(h, path, false); got.Code != 403 {
+		t.Fatalf("unauthorized approval %d", got.Code)
+	}
+	if fake.calls != 0 {
+		t.Fatal("AI submitted refund transferred money before approval")
+	}
+	response := serveRefund(h, path, true)
+	if response.Code != 200 {
+		t.Fatalf("wallet approval %d %s", response.Code, response.Body.String())
+	}
+	if fake.calls != 1 || fake.got.Currency != "CNY" || fake.input.Amount.String() != "20.00" ||
+		fake.requestID != id {
+		t.Fatalf("wrong refund details %#v %#v", fake.input, fake.got)
+	}
+	if got := serveRefund(h, path, true); got.Code != 409 {
+		t.Fatalf("wallet refund replay %d", got.Code)
+	}
+	if fake.calls != 1 {
+		t.Fatal("wallet credited multiple times")
+	}
+	state, err := h.services.AiWalletRefundService.Owned(context.Background(), key, id)
+	if err != nil || state.Status != aidomain.ActionSucceeded {
+		t.Fatalf("refund not recorded %+v %v", state, err)
+	}
+}
+func TestWalletApprovalRejectsChangedOrderNoRetry(t *testing.T) {
+	h, key, fake, id := refundHandlerFixture(t)
+	fake.err = orderrefund.ErrAIWalletRefundUnsafe
+	path := "/admin/ai-access/wallet-refunds/" + id + "/approve"
+	if got := serveRefund(h, path, true); got.Code != 409 {
+		t.Fatalf("stale wallet refund attempted %d", got.Code)
+	}
+	if fake.calls != 1 {
+		t.Fatal("unexpected retries")
+	}
+	if got := serveRefund(h, path, true); got.Code != 409 {
+		t.Fatal("conflicted request replay")
+	}
+	state, err := h.services.AiWalletRefundService.Owned(context.Background(), key, id)
+	if err != nil || state.Status != aidomain.ActionConflict {
+		t.Fatalf("missing refund conflict %+v %v", state, err)
+	}
+}
+func TestWalletApprovalRefusesDisabledServiceOrRevokedAgent(t *testing.T) {
+	h, key, fake, id := refundHandlerFixture(t)
+	path := "/admin/ai-access/wallet-refunds/" + id + "/approve"
+	if _, err := h.services.AiRemoteService.SetConfig(context.Background(), false, "https://shop.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if got := serveRefund(h, path, true); got.Code != 409 {
+		t.Fatalf("remote disabled approved %d", got.Code)
+	}
+	if fake.calls != 0 {
+		t.Fatal("unapproved payout")
+	}
+	if _, err := h.services.AiRemoteService.SetConfig(context.Background(), true, "https://shop.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.services.AiAccessService.Revoke(context.Background(), key.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+	if got := serveRefund(h, path, true); got.Code != 409 {
+		t.Fatalf("revoked AI approved %d", got.Code)
+	}
+	if fake.calls != 0 {
+		t.Fatal("revoked payout executed")
+	}
+	if got := serveRefund(h, "/admin/ai-access/wallet-refunds/"+id+"/reject", true); got.Code != 200 {
+		t.Fatalf("cannot reject revoked request %d", got.Code)
 	}
 }

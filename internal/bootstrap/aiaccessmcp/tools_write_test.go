@@ -376,3 +376,114 @@ func TestMCPStrictUnpaidCancellationRequiresScopeAndOnlySubmitsRequest(t *testin
 		t.Fatal("accepted cancellation request for paid order")
 	}
 }
+
+func TestMCPWalletRefundScopeOnlyProposesFundsNotCredits(t *testing.T) {
+	services, _, remote := fixture(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	store := &aiOrderStoreStub{order: orderdomain.Order{
+		ID: 4300, OrderNo: "SENSITIVE-REFUND-ORDER", Status: "paid", Currency: "CNY",
+		UserID: 10, PaidAt: &now, CreatedAt: now.Add(-time.Hour), UpdatedAt: now,
+		TotalAmount:      money.FromDecimal(decimal.RequireFromString("80.00")),
+		WalletPaidAmount: money.FromDecimal(decimal.RequireFromString("80.00")),
+		OnlinePaidAmount: money.FromDecimal(decimal.Zero), RefundedAmount: money.FromDecimal(decimal.Zero),
+		GuestEmail: "CUSTOMER-WALLET-SECRET@example.test", ClientIP: "203.0.113.17",
+	}}
+	services.OrderStore = store
+	if _, err := remote.SetConfig(context.Background(), true, "https://shop.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	token := issueOAuthToken(t, remote, "orders:wallet-refund:request")
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Any("/mcp", New(services).Serve)
+	server := httptest.NewServer(router)
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	client := mcp.NewClient(&mcp.Implementation{Name: "wallet-ai", Version: "1"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{
+		Endpoint: server.URL + "/mcp", HTTPClient: &http.Client{Transport: rewritingTransport{Base: http.DefaultTransport, Token: token}},
+		DisableStandaloneSSE: true, MaxRetries: -1,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	available, err := session.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := map[string]bool{}
+	for _, tool := range available.Tools {
+		found[tool.Name] = true
+	}
+	for _, tool := range []string{"preview_strict_wallet_refund", "request_strict_wallet_refund", "get_wallet_refund_request_status"} {
+		if !found[tool] {
+			t.Fatalf("wallet request tool missing %s: %+v", tool, found)
+		}
+	}
+	if found["list_order_summaries"] || found["create_product_draft"] || found["request_strict_unpaid_order_cancellation"] {
+		t.Fatalf("wallet refund consent escalated permissions %+v", found)
+	}
+	preview, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "preview_strict_wallet_refund",
+		Arguments: map[string]any{"order_id": 4300, "amount": "20.00"},
+	})
+	if err != nil || preview.IsError {
+		t.Fatalf("preview failed %+v %v", preview, err)
+	}
+	pmap, ok := preview.StructuredContent.(map[string]any)
+	if !ok || pmap["eligible_for_request"] != true {
+		t.Fatalf("expected preflight eligibility %+v", preview)
+	}
+	if strings.Contains(fmt.Sprint(pmap), "CUSTOMER-WALLET-SECRET@example.test") {
+		t.Fatal("refund preflight leaked customer email")
+	}
+	rejected, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "request_strict_wallet_refund",
+		Arguments: map[string]any{"order_id": 4300, "amount": "600.00", "reason": "customer_request"},
+	})
+	if err == nil && !rejected.IsError {
+		t.Fatal("oversized wallet refund accepted")
+	}
+	request, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "request_strict_wallet_refund",
+		Arguments: map[string]any{"order_id": 4300, "amount": "20.00", "reason": "customer_request"},
+	})
+	if err != nil || request.IsError {
+		t.Fatalf("wallet request failed %+v %v", request, err)
+	}
+	body, ok := request.StructuredContent.(map[string]any)
+	if !ok || body["executed"] != false || body["requires_human_approval"] != true || body["wallet_credited"] != false {
+		t.Fatalf("AI executed wallet credit instead of proposing it %+v", request)
+	}
+	if store.order.Status != "paid" || store.order.RefundedAmount.Decimal.Sign() != 0 {
+		t.Fatal("AI tool modified financial state")
+	}
+	id, _ := body["request_id"].(string)
+	if id == "" {
+		t.Fatal("missing durable approval ID")
+	}
+	pending, err := services.AiWalletRefundService.GetForAdmin(ctx, id)
+	if err != nil || pending == nil || pending.Amount != "20.00" || pending.ExpectedTotal != "80.00" || pending.Status != "pending" {
+		t.Fatalf("not persisted %+v %v", pending, err)
+	}
+	status, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "get_wallet_refund_request_status", Arguments: map[string]any{"request_id": id},
+	})
+	if err != nil || status.IsError {
+		t.Fatalf("cannot read request status %+v %v", status, err)
+	}
+	statusMap, _ := status.StructuredContent.(map[string]any)
+	if statusMap["status"] != "pending" {
+		t.Fatalf("status mismatch %+v", statusMap)
+	}
+	store.order.OnlinePaidAmount = money.FromDecimal(decimal.NewFromInt(1))
+	invalid, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "request_strict_wallet_refund",
+		Arguments: map[string]any{"order_id": 4300, "amount": "20.00", "reason": "customer_request"},
+	})
+	if err == nil && !invalid.IsError {
+		t.Fatal("AI could submit wallet refund for online-paid order")
+	}
+}

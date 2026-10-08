@@ -29,7 +29,7 @@ func setup(t *testing.T) (*gorm.DB, *application.Service) {
 	sqlDB, _ := db.DB()
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err = db.AutoMigrate(&domain.Key{}, &domain.Audit{}, &domain.OAuthRefresh{}, &domain.ActionRequest{}, &domain.OrderReview{}, &domain.OrderCancellation{}); err != nil {
+	if err = db.AutoMigrate(&domain.Key{}, &domain.Audit{}, &domain.OAuthRefresh{}, &domain.ActionRequest{}, &domain.OrderReview{}, &domain.OrderCancellation{}, &domain.WalletRefundRequest{}); err != nil {
 		t.Fatal(err)
 	}
 	return db, application.New(gormstore.New(db))
