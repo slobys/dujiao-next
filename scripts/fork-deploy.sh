@@ -40,13 +40,222 @@ require_root() {
   [[ "$EUID" -eq 0 ]] || die "请使用 sudo 或 root 执行。"
 }
 
+APT_UPDATED=0
+APT_DISTRO=""
+APT_CODENAME=""
+APT_ARCH=""
+
+has_command() { command -v "$1" >/dev/null 2>&1; }
+
+platform_supported() {
+  case "$1:$2:$3" in
+    ubuntu:jammy:amd64|ubuntu:jammy:arm64|ubuntu:noble:amd64|ubuntu:noble:arm64|\
+ubuntu:resolute:amd64|ubuntu:resolute:arm64|\
+debian:bookworm:amd64|debian:bookworm:arm64|debian:trixie:amd64|debian:trixie:arm64)
+      return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+detect_apt_platform() {
+  [[ -r /etc/os-release ]] || die "无法识别操作系统；自动安装依赖只支持 Debian/Ubuntu。"
+  local ID="" VERSION_CODENAME="" UBUNTU_CODENAME=""
+  # shellcheck disable=SC1091
+  source /etc/os-release
+  APT_DISTRO="$ID"
+  if [[ "$ID" == "ubuntu" ]]; then
+    APT_CODENAME="${UBUNTU_CODENAME:-$VERSION_CODENAME}"
+  else
+    APT_CODENAME="$VERSION_CODENAME"
+  fi
+  has_command apt-get && has_command dpkg || die "系统缺少 apt-get/dpkg，无法安全自动安装依赖。"
+  APT_ARCH=$(dpkg --print-architecture)
+  platform_supported "$APT_DISTRO" "$APT_CODENAME" "$APT_ARCH" ||
+    die "不支持自动安装：${APT_DISTRO}/${APT_CODENAME}/${APT_ARCH}。支持 Ubuntu 22.04/24.04/26.04 或 Debian 12/13（amd64/arm64）。"
+}
+
+apt_update_once() {
+  if (( APT_UPDATED == 0 )); then
+    info "更新 APT 软件包索引..."
+    apt-get update || die "APT 软件包索引更新失败，请检查网络和软件源。"
+    APT_UPDATED=1
+  fi
+}
+
+apt_install() {
+  (($# > 0)) || return 0
+  info "自动安装缺少的软件包：$*"
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$@" ||
+    die "APT 依赖安装失败：$*（没有删除或重装现有 Docker）。"
+}
+
+ensure_flock_for_install() {
+  has_command flock && return 0
+  detect_apt_platform
+  apt_update_once
+  apt_install util-linux
+  has_command flock || die "util-linux 安装后仍找不到 flock。"
+}
+
+missing_base_packages() {
+  local needs_apt_repo_tools=${1:-false}
+  local tool package
+  for tool in git python3 openssl tar; do
+    has_command "$tool" || printf '%s\n' "$tool"
+  done
+  # A NAS with a healthy Docker/Compose/Buildx needs no curl, GPG or APT changes.
+  if [[ "$needs_apt_repo_tools" == "true" ]]; then
+    for tool in curl gpg; do
+      case "$tool" in
+        gpg) package=gnupg ;;
+        *) package="$tool" ;;
+      esac
+      has_command "$tool" || printf '%s\n' "$package"
+    done
+    has_command update-ca-certificates || printf '%s\n' ca-certificates
+  fi
+}
+
+assert_no_conflicting_engine_packages() {
+  local package
+  for package in docker-ce docker-ce-cli containerd.io docker.io docker-compose docker-compose-v2 docker-doc docker-buildx podman-docker containerd runc; do
+    if dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -qx 'install ok installed'; then
+      die "发现已安装的 ${package}，不能安全自动替换 Docker Engine；未做任何卸载。"
+    fi
+  done
+}
+
+verify_docker_gpg_key() {
+  local fingerprint
+  fingerprint=$(gpg --batch --show-keys --with-colons "$1" 2>/dev/null | awk -F: '$1 == "fpr" {print $10; exit}') ||
+    return 1
+  [[ "$fingerprint" == "9DC858229FC7DD38854AE2D88D81803C0EBFCD88" ]]
+}
+
+docker_apt_source() {
+  cat <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/${APT_DISTRO}
+Suites: ${APT_CODENAME}
+Components: stable
+Architectures: ${APT_ARCH}
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
+}
+
+setup_official_docker_apt_repo() {
+  local source_file="/etc/apt/sources.list.d/dujiao-next-docker.sources"
+  local key_file="/etc/apt/keyrings/docker.asc"
+  if [[ -e "$source_file" ]]; then
+    [[ -f "$source_file" ]] &&
+      grep -Fxq "URIs: https://download.docker.com/linux/${APT_DISTRO}" "$source_file" &&
+      grep -Fxq "Suites: ${APT_CODENAME}" "$source_file" &&
+      grep -Fxq "Architectures: ${APT_ARCH}" "$source_file" &&
+      grep -Fxq "Signed-By: ${key_file}" "$source_file" ||
+      die "既有 Docker APT 源配置不符合预期：${source_file}，拒绝覆盖。"
+    return 0
+  fi
+  if [[ -f /etc/apt/sources.list.d/docker.sources || -f /etc/apt/sources.list.d/docker.list ]]; then
+    info "检测到原有 Docker 官方仓库文件，直接复用，不覆盖。"
+    return 0
+  fi
+  install -m 0755 -d /etc/apt/keyrings
+  if [[ -e "$key_file" ]]; then
+    [[ -f "$key_file" && ! -L "$key_file" ]] &&
+      verify_docker_gpg_key "$key_file" ||
+      die "Docker 公钥与已知指纹不匹配；拒绝覆盖原有密钥。"
+  else
+    local temp_key
+    temp_key=$(mktemp /etc/apt/keyrings/.dujiao-docker-key.XXXXXX)
+    if ! curl --fail --silent --show-error --location \
+      --proto '=https' --proto-redir '=https' --tlsv1.2 \
+      --connect-timeout 10 --max-time 60 \
+      "https://download.docker.com/linux/${APT_DISTRO}/gpg" -o "$temp_key"; then
+      rm -f -- "$temp_key"
+      die "下载 Docker 公钥失败，请检查网络。"
+    fi
+    if ! verify_docker_gpg_key "$temp_key"; then
+      rm -f -- "$temp_key"
+      die "Docker 公钥指纹校验失败，安装已停止。"
+    fi
+    install -m 0644 "$temp_key" "$key_file"
+    rm -f -- "$temp_key"
+  fi
+  local temp_source
+  temp_source=$(mktemp /etc/apt/sources.list.d/.dujiao-docker-source.XXXXXX)
+  docker_apt_source > "$temp_source"
+  install -m 0644 "$temp_source" "$source_file"
+  rm -f -- "$temp_source"
+  APT_UPDATED=0
+  info "已配置 Docker 官方 APT 仓库（不执行 get.docker.com 安装脚本）。"
+}
+
+assert_plugin_install_does_not_modify_engine() {
+  local plan
+  plan=$(apt-get --assume-no --dry-run install --no-install-recommends "$@") ||
+    die "APT 插件安装预检失败，为保护现有 Docker，拒绝继续。"
+  if grep -Eq '^(Remv |Inst (docker-ce |docker-ce-cli |docker.io |containerd |containerd.io |runc |podman-docker ))' <<< "$plan"; then
+    die "补装插件可能卸载/升级现有 Docker 或容器运行时，拒绝操作。"
+  fi
+}
+
+ensure_install_dependencies() {
+  local -a basic=() plugins=()
+  local package needs_apt_repo_tools=false
+  if ! has_command docker; then
+    needs_apt_repo_tools=true
+  elif ! docker compose version >/dev/null 2>&1 || ! docker buildx version >/dev/null 2>&1; then
+    needs_apt_repo_tools=true
+  fi
+  while IFS= read -r package; do
+    [[ -z "$package" ]] || basic+=("$package")
+  done < <(missing_base_packages "$needs_apt_repo_tools")
+  if ((${#basic[@]} > 0)); then
+    detect_apt_platform
+    apt_update_once
+    apt_install "${basic[@]}"
+  fi
+
+  if ! has_command docker; then
+    detect_apt_platform
+    has_command systemctl || die "此服务器无法通过 systemctl 管理 Docker daemon；自动全新安装需要 systemd。"
+    assert_no_conflicting_engine_packages
+    setup_official_docker_apt_repo
+    apt_update_once
+    apt_install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    systemctl enable --now docker ||
+      die "Docker 已安装，但启动失败；请检查 systemctl status docker。"
+  else
+    docker compose version >/dev/null 2>&1 || plugins+=(docker-compose-plugin)
+    docker buildx version >/dev/null 2>&1 || plugins+=(docker-buildx-plugin)
+    if ((${#plugins[@]} > 0)); then
+      detect_apt_platform
+      setup_official_docker_apt_repo
+      apt_update_once
+      assert_plugin_install_does_not_modify_engine "${plugins[@]}"
+      apt_install "${plugins[@]}"
+    else
+      info "Docker、Compose V2 和 Buildx 已存在，直接复用，不升级 Docker。"
+    fi
+    if ! docker info >/dev/null 2>&1 && has_command systemctl; then
+      info "Docker 已安装但暂不可连接，尝试启动服务（不重启正在运行的容器）。"
+      systemctl start docker || true
+    fi
+  fi
+  require_tools
+  docker buildx version >/dev/null 2>&1 ||
+    die "Docker Buildx 不可用，无法从源码构建。"
+}
+
 require_tools() {
   local tool
   for tool in docker git python3 openssl tar flock; do
-    command -v "$tool" >/dev/null 2>&1 || die "缺少 $tool，请先安装。Debian/Ubuntu 可使用 apt 安装所需组件。"
+    has_command "$tool" || die "缺少 $tool；请运行 dujiao-fork install 自动补装。"
   done
-  docker compose version >/dev/null 2>&1 || die "需要 Docker Compose V2（docker compose），参见 https://docs.docker.com/compose/install/"
-  docker info >/dev/null 2>&1 || die "Docker daemon 无法连接，请安装并启动 Docker 服务。"
+  docker compose version >/dev/null 2>&1 ||
+    die "Docker Compose V2 不可用，请运行 dujiao-fork install。"
+  docker info >/dev/null 2>&1 ||
+    die "Docker daemon 不可用，请检查 systemctl status docker。"
 }
 
 validate_install_dir() {
@@ -60,14 +269,14 @@ validate_port() {
 }
 
 validate_bind_ip() {
-  python3 - "$1" <<'PY'
-import ipaddress
-import sys
-try:
-    assert isinstance(ipaddress.ip_address(sys.argv[1]), ipaddress.IPv4Address)
-except (ValueError, AssertionError):
-    sys.exit(1)
-PY
+  local ip=$1 octet
+  [[ "$ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
+  local -a octets
+  IFS=. read -r -a octets <<< "$ip"
+  for octet in "${octets[@]}"; do
+    [[ "$octet" == "0" || "$octet" != 0* ]] || return 1
+    ((10#$octet <= 255)) || return 1
+  done
 }
 
 generate_config() {
@@ -215,6 +424,11 @@ run_install() {
   local port="${DUJIAO_PORT:-18080}"
   validate_bind_ip "$bind_ip" || die "DUJIAO_BIND 必须是合法 IPv4 地址。"
   validate_port "$port" || die "DUJIAO_PORT 必须是 1024-65535 的端口。"
+  # Refuse foreign installation directories before changing host packages.
+  if [[ -e "$INSTALL_DIR" ]]; then
+    require_installed
+  fi
+  ensure_install_dependencies
   if [[ -e "$INSTALL_DIR" ]]; then
     require_installed
     info "检测到上次安装目录，仅重新启动现有部署，不重置数据库和密钥。"
@@ -321,7 +535,7 @@ run_menu() {
     cat >/dev/tty <<'MENU'
 
 ========== Dujiao-Next Fork 管理 ==========
-  1) 一键安装 / 恢复安装
+  1) 一键安装（自动补齐 Docker 等依赖） / 恢复安装
   2) 查看服务状态
   3) 查看运行日志
   4) 立即冷备份（会短暂停止服务）
@@ -345,11 +559,11 @@ MENU
 execute_command() {
   case "$1" in
     install) run_install ;;
-    update) run_update ;;
-    status) require_installed; compose ps ;;
-    logs) require_installed; compose logs --no-color --tail=120 app redis ;;
-    restart) require_installed; compose restart; wait_for_health || die "重启后健康检查未通过。" ;;
-    backup) run_backup ;;
+    update) require_tools; run_update ;;
+    status) require_tools; require_installed; compose ps ;;
+    logs) require_tools; require_installed; compose logs --no-color --tail=120 app redis ;;
+    restart) require_tools; require_installed; compose restart; wait_for_health || die "重启后健康检查未通过。" ;;
+    backup) require_tools; run_backup ;;
     help) usage ;;
     *) die "未知操作。";;
   esac
@@ -366,6 +580,9 @@ Dujiao-Next fork Docker 管理器
   DUJIAO_BIND=127.0.0.1  (默认，仅本机监听；使用 HTTPS 反向代理)
   DUJIAO_PORT=18080      (默认)
   DUJIAO_FORK_DIR=/opt/dujiao-next-fork
+安装流程自动检测并补齐 Debian/Ubuntu 的 Docker Engine、Compose V2、Buildx 及其他缺失依赖。
+如已部署 Docker，仅补装缺失 CLI 插件，拒绝可能影响现有容器的升级/卸载。
+自动安装仅针对 Ubuntu 22.04/24.04/26.04 与 Debian 12/13（amd64/arm64）。
 本脚本不会删除数据库、上传文件、Redis 数据，也不会执行官方上游安装器。
 HELP
 }
@@ -379,7 +596,14 @@ main() {
   esac
   require_root
   validate_install_dir
-  require_tools
+  if [[ "$command" == "install" && -e "$INSTALL_DIR" ]]; then
+    require_installed
+  fi
+  if [[ "$command" == "install" || "$command" == "menu" ]]; then
+    ensure_flock_for_install
+  else
+    has_command flock || die "缺少 flock，运行 install 可自动补装 util-linux。"
+  fi
   exec 9>/run/dujiao-next-fork-manager.lock
   flock -n 9 || die "已有另一个 fork 管理进程在运行。"
   trap cleanup EXIT

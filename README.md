@@ -23,16 +23,19 @@
 
 本 Fork **无需先发布 GitHub Release**：安装器会从 `slobys/dujiao-next` 的 `main` 分支克隆代码，并在服务器上构建完整镜像（含前后台）。
 
-### 1. 服务器准备
+### 1. 服务器准备（依赖自动安装）
 
-- 建议：Ubuntu 22.04+ / Debian 12+，x86_64 或 arm64 Linux；其它系统尚未验证。
-- 预装 [Docker Engine](https://docs.docker.com/engine/install/) 和 **Docker Compose V2**（命令为 `docker compose`，不是旧版 `docker-compose`）。
-- 系统需具备 `git`、`python3`、`openssl`、`tar`、`flock`、`curl`；首次编译会下载 Go / Node 依赖，请预留足够内存、硬盘空间。
-- 建议使用干净的测试服务器验证。安装器**不会接管**已有的上游 systemd 安装；如果目标端口已被占用，需要先调整端口。
+- **无需单独安装 Docker / Docker Compose V2。** 在 Ubuntu **22.04 / 24.04 / 26.04**、Debian **12 / 13**（amd64 或 arm64）上，首次执行安装命令会自动检测并补齐 Docker Engine、Compose V2、Buildx、Git、Python 3、OpenSSL、tar、curl、GnuPG、证书工具等缺失依赖。
+- 新系统通过 **Docker 官方签名 APT 软件源**安装 Docker，不调用 `get.docker.com` 的远程安装脚本；如果 Docker、Compose 和 Buildx 已正常安装，直接复用，不重装或升级现有 Docker。
+- 如果机器已有 Docker 但缺 Compose/Buildx，只尝试补装缺失的 CLI 插件；APT 预检若发现会卸载/升级 Docker 或容器运行时，**拒绝执行**，保护正在运行的其他容器。
+- **需要 root/sudo 和可访问的软件源网络。** 首次获取本安装脚本只需要 `curl` 或 `wget` 其中之一；如果两者都没有，需要借助其他可信方式下载脚本。NAS 等非 Debian/Ubuntu 系统只有在所需工具已存在时才能运行本部署流程，不会自动改动其底层 Docker。
+- 安装不会接管上游 systemd 商城，不会修改其他 Docker Compose 项目；如果端口已被占用，请更换 `DUJIAO_PORT`。首次从源码编译会下载 Go/Node 依赖，请预留足够的内存、磁盘和网络带宽。
+
+> 注意：自动安装 Docker 依赖不等于自动配置域名、HTTPS 或防火墙。Docker 的端口映射可能绕过 UFW 等防火墙规则，请遵循 [Docker 官方防火墙说明](https://docs.docker.com/engine/install/ubuntu/#firewall-limitations) 配置访问控制。
 
 ### 2. 执行安装
 
-先下载脚本、按需检查内容，再执行：
+**安装器会自动补齐缺少的软件**。先下载脚本、按需检查内容，再执行以下命令：
 
 ```bash
 curl -fsSLo /tmp/dujiao-fork-deploy.sh \
@@ -40,7 +43,7 @@ curl -fsSLo /tmp/dujiao-fork-deploy.sh \
 sudo bash /tmp/dujiao-fork-deploy.sh install
 ```
 
-脚本自动执行：克隆 Fork → 构建单镜像全栈应用 → 生成不同的随机密钥和管理员初始密码 → 启动独立 Redis → 持久化 SQLite、上传文件和日志 → 检查服务健康状态。
+脚本自动执行：检测系统与 Docker → 安装缺失依赖 → 克隆 Fork → 构建单镜像全栈应用 → 生成不同的随机密钥和管理员初始密码 → 启动独立 Redis → 持久化 SQLite、上传文件和日志 → 检查服务健康状态。如果安装 Docker 需要替换机器现有容器运行时，或官方 APT 源不可达，安装会安全停止并给出原因，而不会偷偷卸载已有服务。
 
 **默认地址：** `http://127.0.0.1:18080`（只允许服务器本机访问）。首次成功安装时，终端会显示随机后台路径和管理员初始密码；请立即保存并在首次登录后修改。
 
