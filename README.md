@@ -60,7 +60,7 @@ sudo dujiao-fork status
 
 > 如果 NPM 运行在**另一个 Docker 容器**中，该容器内的 `127.0.0.1` 不是宿主机。请按实际 Docker 网络或宿主机地址配置上游，不要直接照搬 `127.0.0.1`。
 
-仅在确实需要从其它容器/机器访问宿主机端口，并已做好防火墙限制时，才在**首次安装前**设置监听地址和端口：
+仅在确实需要从其它容器/机器访问宿主机端口，并已做好防火墙限制时，才在**首次安装时**指定监听地址和端口；**已安装的商城**请使用下方的 `sudo dujiao-fork configure-network` 菜单功能：
 
 ```bash
 sudo env DUJIAO_BIND=0.0.0.0 DUJIAO_PORT=18080 \
@@ -81,8 +81,43 @@ sudo env DUJIAO_BIND=0.0.0.0 DUJIAO_PORT=18080 \
 | `sudo dujiao-fork backup` | 停止服务写入、备份并验证归档，随后重启 |
 | `sudo dujiao-fork update` | 自动备份 → 更新 Fork `main` → 构建新镜像 → 重启并检查 |
 | `sudo dujiao-fork help` | 查看命令与可配置参数 |
+| `sudo dujiao-fork configure-network` | 交互式修改监听 IP、端口，自动重建应用，失败尝试回滚 |
 
 运行 **`sudo dujiao-fork`**（不带参数）可进入中文交互式菜单；脚本自动化仍可以使用上表的独立命令。菜单不会增加自动卸载、公开数据或修改支付设置等高危操作。
+
+### 修改监听 IP / 端口（已安装的商城）
+
+如果通过公网 IP 无法访问，通常是因为安全默认值 `DUJIAO_BIND=127.0.0.1` **仅允许本机连接**。现在不用手工编辑 `.env`，直接运行：
+
+```bash
+sudo dujiao-fork
+# 选择 8) 修改监听 IP / 端口
+```
+
+也可以使用独立命令：
+
+```bash
+sudo dujiao-fork configure-network
+```
+
+菜单会显示**当前**监听 IP 和端口，按回车表示保持原值。选择 `0.0.0.0` 或其它非本机回环 IP 时需要在终端输入 `PUBLIC` 再确认。脚本会检查 IP、端口和 Docker Compose 配置，**只重建 `app` 容器**（无需重新编译、不重启 Redis、不清除数据）。重建或健康检查失败时会尝试恢复原先的 `.env` 和应用端口。
+
+如需无人值守地修改（仅供已配置防火墙和 HTTPS 的场景）：
+
+```bash
+sudo env DUJIAO_BIND=0.0.0.0 DUJIAO_PORT=18080 DUJIAO_CONFIRM_PUBLIC=YES \
+  dujiao-fork configure-network
+```
+
+如果不需要公网直连，请保留 `127.0.0.1`，通过同机 Nginx/Caddy 配置 HTTPS。若设置 `0.0.0.0` 并直接用 IP 访问，**HTTP 管理员密码会明文传输**，只能用于临时测试；正式环境应收紧 Vultr 云防火墙规则。已经对外公开过的初始化密码请立即修改并启用管理员 2FA。
+
+现有部署若需要先获得新管理菜单，**只需同步 Git 代码**，不必重建已有 Go/Vue 商城镜像：
+
+```bash
+sudo git -C /opt/dujiao-next-fork/src pull --ff-only
+sudo dujiao-fork
+```
+
 
 ### 更新的行为与限制
 

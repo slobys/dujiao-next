@@ -284,8 +284,8 @@ else
 fi
 check "existing flock made no APT calls" test ! -e "$TEST_TMP/flock-existing-apt"
 
-menu_expected=(install status logs backup update restart help exit)
-menu_codes=(1 2 3 4 5 6 7 0)
+menu_expected=(install status logs backup update restart help configure-network exit)
+menu_codes=(1 2 3 4 5 6 7 8 0)
 for i in "${!menu_codes[@]}"; do
   actual=$(menu_command_for "${menu_codes[$i]}")
   if [[ "$actual" == "${menu_expected[$i]}" ]]; then
@@ -441,5 +441,150 @@ if [[ "$backup_mode" == "600" && "$(stat -c "%a" "$BACKUP_DIR")" == "700" ]]; th
 else
   fail "backup file and directory permissions are private"
 fi
+
+# Network settings are changed in .env only, without touching Redis secrets,
+# user uploads, SQLite, payment configuration or the Redis container.
+network_file="$INSTALL_DIR/.env"
+printf 'DUJIAO_BIND=127.0.0.1\nDUJIAO_PORT=18080\nREDIS_PASSWORD=do-not-print-secret\nUNRELATED_OPTION=keep-this\n' > "$network_file"
+chmod 0600 "$network_file"
+assert_equal_network() {
+  [[ "$(network_env_current)" == "$1" ]]
+}
+check "parses existing network without sourcing Redis password" assert_equal_network "127.0.0.1 18080"
+network_env_write "$network_file" "0.0.0.0" "18081"
+check "atomic write changes listening IP" grep -Fxq 'DUJIAO_BIND=0.0.0.0' "$network_file"
+check "atomic write changes listening port" grep -Fxq 'DUJIAO_PORT=18081' "$network_file"
+check "atomic write retains Redis secret exactly" grep -Fxq 'REDIS_PASSWORD=do-not-print-secret' "$network_file"
+check "atomic write preserves other env settings" grep -Fxq 'UNRELATED_OPTION=keep-this' "$network_file"
+check "atomic .env has 0600 permissions" test "$(stat -c '%a' "$network_file")" = "600"
+check "updated IP and port can be reread" assert_equal_network "0.0.0.0 18081"
+printf 'DUJIAO_BIND=127.0.0.1\nDUJIAO_BIND=0.0.0.0\nDUJIAO_PORT=18080\nREDIS_PASSWORD=keep\n' > "$TEST_DIR/duplicate-network.env"
+cp "$TEST_DIR/duplicate-network.env" "$TEST_DIR/duplicate-network.before"
+if network_env_write "$TEST_DIR/duplicate-network.env" "0.0.0.0" "19999" >/dev/null 2>&1; then
+  fail "rejects duplicate bind variables without changing file"
+else
+  pass "rejects duplicate bind variables without changing file"
+fi
+check "duplicate failure retained exact original env" cmp -s "$TEST_DIR/duplicate-network.env" "$TEST_DIR/duplicate-network.before"
+
+printf 'DUJIAO_BIND=127.0.0.1\nDUJIAO_PORT=18080\nREDIS_PASSWORD=do-not-print-secret\nUNRELATED_OPTION=keep-this\n' > "$network_file"
+chmod 0600 "$network_file"
+: > "$TEST_DIR/network-actions"
+compose() { printf '%s\n' "$*" >> "$TEST_DIR/network-actions"; }
+wait_for_health() { return 0; }
+NETWORK_PENDING=0
+NETWORK_BACKUP=""
+check "unchanged binding skips app recreation" apply_network_configuration "127.0.0.1" "18080"
+check "unchanged binding leaves Compose untouched" test ! -s "$TEST_DIR/network-actions"
+if ( apply_network_configuration "0.0.0.0" "99999" ) >/dev/null 2>&1; then
+  fail "rejects invalid requested public port before modifying env"
+else
+  pass "rejects invalid requested public port before modifying env"
+fi
+check "invalid port leaves original env" assert_equal_network "127.0.0.1 18080"
+DUJIAO_CONFIRM_PUBLIC=YES apply_network_configuration "0.0.0.0" "18088"
+check "successful change updates bind and port" assert_equal_network "0.0.0.0 18088"
+check "only app container is force recreated" grep -Fxq 'up -d --no-build --no-deps --force-recreate app' "$TEST_DIR/network-actions"
+check "Compose config is checked before recreation" grep -Fxq 'config --quiet' "$TEST_DIR/network-actions"
+if grep -Eq '(stop redis|up -d redis|--force-recreate redis)' "$TEST_DIR/network-actions"; then
+  fail "network changes must not restart Redis"
+else
+  pass "network changes must not restart Redis"
+fi
+check "success deletes temporary .env backup" test -z "$(find "$INSTALL_DIR" -maxdepth 1 -name '.env.network-backup.*' -print -quit)"
+check "success preserves Redis password" grep -Fxq 'REDIS_PASSWORD=do-not-print-secret' "$network_file"
+check "success leaves SQLite untouched" grep -Fxq 'sqlite content' "$INSTALL_DIR/data/db/dujiao.db"
+
+# A failed force-recreate must return nonzero AND restore the original .env;
+# the cleanup EXIT trap recreates the old app, never manipulating Redis.
+: > "$TEST_DIR/network-failure-actions"
+if (
+  DUJIAO_CONFIRM_PUBLIC=YES
+  compose() {
+    printf '%s\n' "$*" >> "$TEST_DIR/network-failure-actions"
+    if [[ "$*" == "up -d --no-build --no-deps --force-recreate app" ]]; then
+      local count
+      count=$(grep -Fc 'up -d --no-build --no-deps --force-recreate app' "$TEST_DIR/network-failure-actions")
+      ((count > 1))
+    fi
+  }
+  wait_for_health() { return 0; }
+  NETWORK_PENDING=0
+  NETWORK_BACKUP=""
+  trap cleanup EXIT
+  apply_network_configuration "0.0.0.0" "18089"
+) >/dev/null 2>&1; then
+  fail "failed recreate must not claim success"
+else
+  pass "failed recreate must not claim success"
+fi
+check "failed recreate restores prior listen IP and port" assert_equal_network "0.0.0.0 18088"
+check "failed recreate triggers old app recreation" test "$(grep -Fc 'up -d --no-build --no-deps --force-recreate app' "$TEST_DIR/network-failure-actions")" = "2"
+check "rollback protects Redis password" grep -Fxq 'REDIS_PASSWORD=do-not-print-secret' "$network_file"
+check "rollback backup removed after successful recovery" test -z "$(find "$INSTALL_DIR" -maxdepth 1 -name '.env.network-backup.*' -print -quit)"
+
+# Fail after Compose recreates app but its health-check fails. The former
+# binding and the corresponding healthy app should be brought back.
+: > "$TEST_DIR/network-health-actions"
+if (
+  DUJIAO_CONFIRM_PUBLIC=YES
+  HEALTH_CALLS=0
+  compose() { printf '%s\n' "$*" >> "$TEST_DIR/network-health-actions"; }
+  wait_for_health() {
+    HEALTH_CALLS=$((HEALTH_CALLS + 1))
+    ((HEALTH_CALLS > 1))
+  }
+  NETWORK_PENDING=0
+  NETWORK_BACKUP=""
+  trap cleanup EXIT
+  apply_network_configuration "0.0.0.0" "18090"
+) >/dev/null 2>&1; then
+  fail "failed health-check must not claim success"
+else
+  pass "failed health-check must not claim success"
+fi
+check "failed health-check restores original network" assert_equal_network "0.0.0.0 18088"
+check "failed health-check reverts app container" test "$(grep -Fc 'up -d --no-build --no-deps --force-recreate app' "$TEST_DIR/network-health-actions")" = "2"
+check "both rollback paths leave no stale backups" test -z "$(find "$INSTALL_DIR" -maxdepth 1 -name '.env.network-backup.*' -print -quit)"
+
+
+# Reject redirecting secrets through symlinked .env files.
+ln -s "$network_file" "$TEST_DIR/symlinked-env"
+if network_env_write "$TEST_DIR/symlinked-env" "127.0.0.1" "19990" >/dev/null 2>&1; then
+  fail "rejects symlinked .env file"
+else
+  pass "rejects symlinked .env file"
+fi
+check "symlink rejection leaves active env unchanged" assert_equal_network "0.0.0.0 18088"
+
+# Compose preflight failures must also roll back immediately.
+: > "$TEST_DIR/network-config-actions"
+if (
+  DUJIAO_CONFIRM_PUBLIC=YES
+  compose() {
+    printf '%s\n' "$*" >> "$TEST_DIR/network-config-actions"
+    [[ "$*" != "config --quiet" ]]
+  }
+  wait_for_health() { return 0; }
+  NETWORK_PENDING=0
+  NETWORK_BACKUP=""
+  trap cleanup EXIT
+  apply_network_configuration "0.0.0.0" "18091"
+) >/dev/null 2>&1; then
+  fail "Compose validation failure must not report success"
+else
+  pass "Compose validation failure must not report success"
+fi
+check "Compose validation failure restores .env" assert_equal_network "0.0.0.0 18088"
+check "Compose validation failure restores healthy old app" grep -Fxq 'up -d --no-build --no-deps --force-recreate app' "$TEST_DIR/network-config-actions"
+
+# Explicit environment mode remains usable without a tty for automation.
+DUJIAO_BIND=127.0.0.1 DUJIAO_PORT=18088 run_configure_network
+check "CLI changes public binding to loopback" assert_equal_network "127.0.0.1 18088"
+DUJIAO_BIND=0.0.0.0 DUJIAO_PORT=18088 DUJIAO_CONFIRM_PUBLIC=YES run_configure_network
+check "CLI can restore publicly bound port with explicit consent" assert_equal_network "0.0.0.0 18088"
+check "CLI keeps Redis secret private" grep -Fxq 'REDIS_PASSWORD=do-not-print-secret' "$network_file"
+check "no .env rollback artifacts remain" test -z "$(find "$INSTALL_DIR" -maxdepth 1 -name '.env.network-backup.*' -print -quit)"
+
 printf '%d passed, %d failed\n' "$passed" "$failed"
 ((failed == 0))

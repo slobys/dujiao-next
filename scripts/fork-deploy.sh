@@ -26,6 +26,23 @@ compose() {
 cleanup() {
   local original_exit=$?
   trap - EXIT
+  if (( NETWORK_PENDING == 1 )); then
+    info "监听配置未成功应用，正在恢复此前的 .env 和应用容器..."
+    if [[ -n "$NETWORK_BACKUP" && -f "$NETWORK_BACKUP" ]] &&
+       install -m 0600 "$NETWORK_BACKUP" "$INSTALL_DIR/.env"; then
+      if recreate_app_only && wait_for_health; then
+        info "已恢复旧监听配置和应用健康状态。"
+        rm -f -- "$NETWORK_BACKUP"
+        NETWORK_BACKUP=""
+        NETWORK_PENDING=0
+      else
+        info "警告：自动恢复容器未通过健康检查；旧配置已还原。请手动检查 sudo dujiao-fork status/logs。"
+        info "备份仍保存在：$NETWORK_BACKUP（文件权限 0600）。"
+      fi
+    else
+      info "警告：旧监听环境文件无法还原，请检查备份：$NETWORK_BACKUP。"
+    fi
+  fi
   if (( RESTORE_AFTER_BACKUP == 1 )); then
     info "正在尝试重新启动备份前暂停的服务..."
     compose up -d --no-build >&2 || info "自动恢复失败，请运行 dujiao-fork restart 并查看日志。"
@@ -514,6 +531,155 @@ run_update() {
   info "fork 已更新，配置与数据保持不变。"
 }
 
+
+# Keep the generated .env as data; never source it, expose Redis secrets or
+# replace the entire Compose application when only the published port changes.
+NETWORK_BACKUP=""
+NETWORK_PENDING=0
+
+network_env_current() {
+  local env_file="$INSTALL_DIR/.env"
+  [[ -f "$env_file" && ! -L "$env_file" ]] || die "环境文件不存在或是符号链接，拒绝修改。"
+  local current
+  current=$(awk '
+    /^DUJIAO_BIND=/ {bind=substr($0,13); binds++}
+    /^DUJIAO_PORT=/ {port=substr($0,13); ports++}
+    END {
+      if (binds != 1 || ports != 1) exit 1
+      printf "%s %s\n", bind, port
+    }' "$env_file") || die "环境文件的监听配置不存在或出现重复字段，拒绝修改。"
+  local bind port
+  read -r bind port <<< "$current"
+  validate_bind_ip "$bind" && validate_port "$port" ||
+    die "现有环境文件监听 IP/端口无效，拒绝修改。"
+  printf '%s %s\n' "$bind" "$port"
+}
+
+network_env_write() {
+  local env_file=$1 bind=$2 port=$3
+  validate_bind_ip "$bind" && validate_port "$port" || die "监听 IP/端口不合法。"
+  python3 - "$env_file" "$bind" "$port" <<'PY'
+import os
+import pathlib
+import stat
+import sys
+import tempfile
+
+path = pathlib.Path(sys.argv[1])
+bind, port = sys.argv[2:]
+if not stat.S_ISREG(os.lstat(path).st_mode):
+    raise SystemExit("拒绝修改非普通文件或符号链接")
+original = path.read_text(encoding="utf-8")
+lines = original.splitlines(keepends=True)
+replacements = {"DUJIAO_BIND": bind, "DUJIAO_PORT": port}
+counts = {key: 0 for key in replacements}
+updated = []
+for line in lines:
+    key, delimiter, _ = line.partition("=")
+    if delimiter and key in replacements:
+        counts[key] += 1
+        updated.append(f"{key}={replacements[key]}\n")
+    else:
+        updated.append(line)
+if any(count != 1 for count in counts.values()):
+    raise SystemExit("监听字段缺失或重复，原文件未修改")
+tmp_name = None
+try:
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8",
+                                     prefix=".env.network.", dir=path.parent,
+                                     delete=False) as handle:
+        tmp_name = handle.name
+        os.fchmod(handle.fileno(), 0o600)
+        handle.write("".join(updated))
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp_name, path)
+except BaseException:
+    if tmp_name and os.path.exists(tmp_name):
+        os.unlink(tmp_name)
+    raise
+PY
+}
+
+confirm_public_bind() {
+  local bind=$1 answer
+  [[ "$bind" == 127.* ]] && return 0
+  if [[ "${DUJIAO_CONFIRM_PUBLIC:-}" == "YES" ]]; then
+    return 0
+  fi
+  [[ -r /dev/tty && -w /dev/tty ]] ||
+    die "公网监听需明确确认。自动化请设置 DUJIAO_CONFIRM_PUBLIC=YES，并确保有 HTTPS 和防火墙策略。"
+  printf '\n[警告] 将商城绑定到非回环 IP：%s，可能允许其它机器访问管理后台。\n请先限制 Vultr/系统防火墙来源，并配置 HTTPS 反向代理。\n确认继续请输入 PUBLIC：' "$bind" >/dev/tty
+  IFS= read -r answer </dev/tty || die "操作已取消。"
+  [[ "$answer" == "PUBLIC" ]] || die "没有获得公网监听确认，未修改配置。"
+}
+
+recreate_app_only() {
+  # Compose restart does not update port bindings; only recreate app.
+  compose up -d --no-build --no-deps --force-recreate app
+}
+
+apply_network_configuration() {
+  local bind=$1 port=$2 previous_bind previous_port
+  require_installed
+  read -r previous_bind previous_port < <(network_env_current)
+  validate_bind_ip "$bind" || die "监听 IP 无效：$bind。仅支持 IPv4 地址。"
+  validate_port "$port" || die "监听端口无效：$port。必须在 1024-65535 之间。"
+  if [[ "$bind" == "$previous_bind" && "$port" == "$previous_port" ]]; then
+    info "当前已监听 ${bind}:${port}，无需重建容器。"
+    return 0
+  fi
+  confirm_public_bind "$bind"
+
+  NETWORK_BACKUP=$(mktemp "${INSTALL_DIR}/.env.network-backup.XXXXXXXX")
+  if ! install -m 0600 "$INSTALL_DIR/.env" "$NETWORK_BACKUP"; then
+    rm -f -- "$NETWORK_BACKUP"
+    NETWORK_BACKUP=""
+    die "无法保护旧环境文件，拒绝应用变更。"
+  fi
+  NETWORK_PENDING=1
+  network_env_write "$INSTALL_DIR/.env" "$bind" "$port" ||
+    die "生成网络配置失败，正在恢复。"
+  compose config --quiet || die "Docker Compose 校验未通过，正在恢复。"
+  recreate_app_only || die "应用容器重新创建失败，正在恢复旧监听配置。"
+  wait_for_health || die "应用重建后健康检查失败，正在恢复旧监听配置。"
+
+  NETWORK_PENDING=0
+  rm -f -- "$NETWORK_BACKUP"
+  NETWORK_BACKUP=""
+  info "监听已变更：${previous_bind}:${previous_port} → ${bind}:${port}。"
+  info "仅重建商城应用容器，未重建 Redis 或更改数据库、商品信息。"
+  if [[ "$bind" != 127.* ]]; then
+    info "警告：商城已绑定非回环 IP。请使用 HTTPS 反向代理，并限制公网端口来源。"
+  fi
+}
+
+prompt_network_configuration() {
+  [[ -r /dev/tty && -w /dev/tty ]] ||
+    die "交互式配置需要真实终端。非交互模式请设置 DUJIAO_BIND 与 DUJIAO_PORT。"
+  local old_bind old_port bind port input
+  read -r old_bind old_port < <(network_env_current)
+  printf '\n当前监听：%s:%s\n新监听 IP（回车保持原值，0.0.0.0 表示所有 IPv4 接口）[%s]：' \
+    "$old_bind" "$old_port" "$old_bind" >/dev/tty
+  IFS= read -r input </dev/tty || die "输入中断，未修改配置。"
+  bind=${input:-$old_bind}
+  printf '新端口（回车保持原值）[%s]：' "$old_port" >/dev/tty
+  IFS= read -r input </dev/tty || die "输入中断，未修改配置。"
+  port=${input:-$old_port}
+  apply_network_configuration "$bind" "$port"
+}
+
+run_configure_network() {
+  require_installed
+  if [[ -n "${DUJIAO_BIND+x}" || -n "${DUJIAO_PORT+x}" ]]; then
+    local old_bind old_port
+    read -r old_bind old_port < <(network_env_current)
+    apply_network_configuration "${DUJIAO_BIND:-$old_bind}" "${DUJIAO_PORT:-$old_port}"
+  else
+    prompt_network_configuration
+  fi
+}
+
 menu_command_for() {
   case "${1:-}" in
     1) printf 'install' ;;
@@ -523,6 +689,7 @@ menu_command_for() {
     5) printf 'update' ;;
     6) printf 'restart' ;;
     7) printf 'help' ;;
+    8) printf 'configure-network' ;;
     0|q|Q) printf 'exit' ;;
     *) return 1 ;;
   esac
@@ -542,13 +709,14 @@ run_menu() {
   5) 更新源码并构建（先备份）
   6) 重启服务
   7) 命令帮助
+  8) 修改监听 IP / 端口（自动重建应用，失败恢复）
   0) 退出
 ===========================================
 MENU
     printf '请输入编号: ' >/dev/tty
     IFS= read -r choice </dev/tty || return 0
     if ! action=$(menu_command_for "$choice"); then
-      info "无效的菜单编号：请使用 0-7。"
+      info "无效的菜单编号：请使用 0-8。"
       continue
     fi
     [[ "$action" != "exit" ]] || return 0
@@ -564,6 +732,7 @@ execute_command() {
     logs) require_tools; require_installed; compose logs --no-color --tail=120 app redis ;;
     restart) require_tools; require_installed; compose restart; wait_for_health || die "重启后健康检查未通过。" ;;
     backup) require_tools; run_backup ;;
+    configure-network) require_tools; run_configure_network ;;
     help) usage ;;
     *) die "未知操作。";;
   esac
@@ -572,9 +741,12 @@ execute_command() {
 usage() {
   cat <<'HELP'
 Dujiao-Next fork Docker 管理器
-用法：sudo bash fork-deploy.sh [menu|install|update|status|logs|restart|backup|help]
+用法：sudo bash fork-deploy.sh [menu|install|update|status|logs|restart|backup|configure-network|help]
       成功安装后可运行：sudo dujiao-fork （无参数打开交互菜单）
       也支持：sudo dujiao-fork <命令> （供自动化脚本调用）
+修改 IP/端口：sudo dujiao-fork configure-network （交互式）
+自动化配置：sudo env DUJIAO_BIND=127.0.0.1 DUJIAO_PORT=18080 dujiao-fork configure-network
+公网监听需在终端输入 PUBLIC 或额外指定 DUJIAO_CONFIRM_PUBLIC=YES（不建议裸露 HTTP）。
 
 首次安装可指定：
   DUJIAO_BIND=127.0.0.1  (默认，仅本机监听；使用 HTTPS 反向代理)
@@ -591,7 +763,7 @@ main() {
   local command="${1:-menu}"
   case "$command" in
     help|-h|--help) usage; return ;;
-    menu|install|update|status|logs|restart|backup) ;;
+    menu|install|update|status|logs|restart|backup|configure-network) ;;
     *) usage; die "未知命令：$command" ;;
   esac
   require_root
