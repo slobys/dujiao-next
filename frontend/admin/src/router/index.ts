@@ -316,6 +316,12 @@ const routes = [
         meta: { permission: 'GET:/admin/api-credentials' },
       },
       {
+        path: 'ai-access',
+        name: 'ai-access',
+        component: () => import('@/views/admin/AiAccess.vue'),
+        meta: { permission: 'GET:/admin/ai-access/keys' },
+      },
+      {
         path: 'telegram-bot',
         name: 'telegram-bot',
         component: () => import('@/views/admin/TelegramBot.vue'),

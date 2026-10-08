@@ -607,6 +607,13 @@ export const adminAPI = {
   updateApiCredentialStatus: (id: number, data: { is_active: boolean }) => api.put(`/admin/api-credentials/${id}/status`, data),
   deleteApiCredential: (id: number) => api.delete(`/admin/api-credentials/${id}`),
 
+  // AI 专用机器凭证（与渠道用户 API Key 完全隔离）
+  listAiKeys: () => api.get('/admin/ai-access/keys'),
+  createAiKey: (data: { name: string; scopes: string[]; days: number }) => api.post('/admin/ai-access/keys', data),
+  rotateAiKey: (id: number) => api.post(`/admin/ai-access/keys/${id}/rotate`),
+  revokeAiKey: (id: number) => api.post(`/admin/ai-access/keys/${id}/revoke`),
+  listAiAudit: () => api.get('/admin/ai-access/audit', { params: { limit: 50 } }),
+
   // Channel Clients (Bot Clients)
   getChannelClients: () => api.get('/admin/channel-clients'),
   createChannelClient: (data: { name: string; channel_type: string; description?: string; bot_token?: string; callback_url?: string }) => api.post('/admin/channel-clients', data),

@@ -3,6 +3,7 @@ package migrations
 import (
 	"github.com/dujiao-next/internal/constants"
 	affiliatedomain "github.com/dujiao-next/internal/modules/affiliate/domain"
+	aiaccessdomain "github.com/dujiao-next/internal/modules/aiaccess/domain"
 	apicredentialdomain "github.com/dujiao-next/internal/modules/apicredential/domain"
 	auditlogdomain "github.com/dujiao-next/internal/modules/auditlog/domain"
 	cardsecretdomain "github.com/dujiao-next/internal/modules/cardsecret/domain"
@@ -82,6 +83,8 @@ func AutoMigrate() error {
 		&contentdomain.Banner{},
 		&settingsstore.SettingRecord{},
 		&apicredentialdomain.ApiCredential{},
+		&aiaccessdomain.Key{},
+		&aiaccessdomain.Audit{},
 		&siteconnectiondomain.Connection{},
 		&mappingdomain.Mapping{},
 		&mappingdomain.SKUMapping{},

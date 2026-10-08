@@ -190,6 +190,18 @@ class ToolRegistryTests(unittest.TestCase):
 
 class PrivateCredentialsTests(unittest.TestCase):
     def test_secure_credential_file_parsed_as_data(self):
+        # Integration with the new revocable AI machine token (no admin JWT).
+        with tempfile.TemporaryDirectory() as temp:
+            path = pathlib.Path(temp) / "ai-machine.env"
+            path.write_text(
+                "DUJIAO_BASE_URL=https://shop.example.com\n"
+                "DUJIAO_AI_TOKEN=djai_test_secret\n", encoding="utf-8",
+            )
+            path.chmod(0o600)
+            with mock.patch.dict(os.environ, {"DUJIAO_MCP_SECRETS_FILE": str(path)}, clear=True):
+                server.load_private_credentials()
+                self.assertEqual(os.environ["DUJIAO_AI_TOKEN"], "djai_test_secret")
+                self.assertNotIn("DUJIAO_ADMIN_TOKEN", os.environ)
         with tempfile.TemporaryDirectory() as temp:
             path = pathlib.Path(temp) / "secret.env"
             path.write_text(

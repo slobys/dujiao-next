@@ -8,6 +8,7 @@ import (
 	"github.com/dujiao-next/internal/config"
 	adproxytransport "github.com/dujiao-next/internal/modules/adproxy/transport/http"
 	affiliatetransport "github.com/dujiao-next/internal/modules/affiliate/transport/http"
+	aiaccesshttp "github.com/dujiao-next/internal/modules/aiaccess/transport/http"
 	apicredentialtransport "github.com/dujiao-next/internal/modules/apicredential/transport/http"
 	auditlogtransport "github.com/dujiao-next/internal/modules/auditlog/transport/http"
 	cardsecrettransport "github.com/dujiao-next/internal/modules/cardsecret/transport/http"
@@ -140,6 +141,7 @@ func registerAdminRoutes(
 	resellertransport.RegisterFinanceRoutes(paymentProtected, adminResellerFinanceHandler)
 
 	// 权限管理
+	aiaccesshttp.RegisterAdminRoutes(authorized, aiaccesshttp.NewAdminHandler(c.AiAccessService))
 	adminauthztransport.RegisterAdminRoutes(authorized, adminAuthzHandler)
 	auditlogtransport.RegisterAdminRoutes(authorized, adminAuditLogHandler)
 	authorized.GET("/authz/permissions/catalog", func(ctx *gin.Context) {

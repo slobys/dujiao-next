@@ -1,6 +1,6 @@
 # Dujiao-Next：OpenClaw / n8n 集成（第一阶段）
 
-这是**独立的辅助脚本和 OpenClaw Skill**，不新增商城的公开 API，也不修改支付流程。基于仓库现有的管理员登录、商品、分类、Dashboard 端点；Python 3 标准库即可运行。
+这是**独立的辅助脚本和 OpenClaw Skill**，不修改支付流程。现支持商城后台**系统设置 → AI 接入管理**创建的机器 Key，走独立 `/api/v1/ai/` 只读路由；旧版低权限管理员 JWT 仍兼容。Python 3 标准库即可运行。通用 MCP 连接方式见 [MCP 指南](../mcp/README.md)。
 
 ## 1. 安装 OpenClaw Skill
 
@@ -17,13 +17,13 @@ openclaw skills list
 
 ## 2. 连接管理员 API
 
-**优先**配置独立、最小权限的管理员身份，而不是使用超管 JWT、root 密钥或数据库密码。可用权限包括读取商品/分类/仪表盘，以及（如确有需要）创建商品。商城的管理员 API 使用 Bearer JWT；典型 JWT 会过期，因此临时 token **不适合长时间无人值守**。
+**优先**在商城后台的 AI 接入管理创建独立只读机器 Key，为每个 AI 工具分配 `catalog:read`、`inventory:read` 和/或 `report:read` 及 1–90 天有效期。密钥只显示一次、可撤销/轮换；不需要保存管理员账号密码。旧版受限管理员 JWT 方式保留兼容，但不适合长期无人值守；严禁使用超级管理员或 root 凭据。
 
 不把凭据提交到 Git、不通过聊天发送密码；在 NAS 的受限进程环境中注入这些环境变量：
 
 ```bash
 DUJIAO_BASE_URL=https://shop.example.com
-DUJIAO_ADMIN_TOKEN=<临时管理员 JWT>
+DUJIAO_AI_TOKEN=<商城后台创建的只读AI Key>
 ```
 
 如果需要自动登录，可使用 **权限受限的专用管理员账号**通过 `DUJIAO_ADMIN_USERNAME` 和 `DUJIAO_ADMIN_PASSWORD` 登录，系统会遵守现有登录限流、CAPTCHA、2FA 检查：**含交互挑战时无人值守任务将失败，不会自动绕过**。保管好凭据并限制 API 来源 IP；无安全的机器凭证方案时不要让机器人长期持有后台密码。HTTP 仅支持本机 `localhost/127.0.0.1/::1`，外网必须 HTTPS；不会跟随 HTTP 跳转或使用环境代理传输 JWT。
@@ -31,7 +31,8 @@ DUJIAO_ADMIN_TOKEN=<临时管理员 JWT>
 环境变量名 | 说明
 --- | ---
 `DUJIAO_BASE_URL` | 商城根地址（不含 `/admin` 路径）
-`DUJIAO_ADMIN_TOKEN` | 可选，短期登录 JWT，优先使用
+`DUJIAO_AI_TOKEN` | 推荐，独立的只读机器 Key；撤销/过期后立即失效
+`DUJIAO_ADMIN_TOKEN` | 可选兼容，短期限权管理员 JWT
 `DUJIAO_ADMIN_USERNAME` / `DUJIAO_ADMIN_PASSWORD` | 可选，只在无 JWT 时登录
 `DUJIAO_TELEGRAM_BOT_TOKEN` | 可选，向 Telegram 发日报
 `DUJIAO_TELEGRAM_CHAT_ID` | 可选，日报接收对象 ID
@@ -57,6 +58,8 @@ python3 dujiao.py draft-product --category-id 1 --slug sample-001 --title "演�
 
 执行后商品为**下架、人工交付、库存 0**。后续通过商城后台补充发货内容、SKU、图片与支付方式，并由人手动上架。不要让 Agent 执行任何自动发布操作。
 
+**重要：** 使用 `DUJIAO_AI_TOKEN` 时，以上 `--execute` 即使手工加上也会被 API 客户端拒绝，AI Key 只有只读权限。草稿写入只属于旧版获得人工确认且有专门商品创建 RBAC 权限的管理员 JWT 流程；推荐改为在商城后台由人工创建/发布。
+
 ## 4. 每天 09:00 自动发 Telegram 报表（n8n）
 
 本仓库提供 `n8n-daily-telegram.json` 工作流示例：
@@ -69,7 +72,7 @@ python3 dujiao.py draft-product --category-id 1 --slug sample-001 --title "演�
 
 `n8n` 2.x 默认禁用高风险 **Execute Command** 节点，因此此模板使用 SSH，命令在你指定的 NAS 登录账户中执行，而不是 n8n 容器内执行。若 OpenClaw 与商城安装在不同主机，使用正确的 HTTPS 地址或经认证的内部网络连接。
 
-> 当前集成没有后台长期 API Key 发行/轮换机制，无法保证启用 CAPTCHA/2FA 的管理员账号长期完全无人值守。正式启用持续日报前，建议单独设计受限服务凭证及撤销能力，并为发送失败建立监控。
+> AI 接入管理现在已提供到期、轮换、撤销和访问审计；建议各 AI/工作流分别使用独立只读 Key，并在到期前手工创建新凭证。密钥轮换和失效需要同步更新 NAS 的私密凭据文件；如发送失败，请建立监控而不是关闭 2FA。
 
 ## 5. 运行测试
 

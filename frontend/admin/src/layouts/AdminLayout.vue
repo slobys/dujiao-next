@@ -520,6 +520,12 @@ const navGroups = computed<NavGroup[]>(() => {
           permission: 'GET:/admin/authz/roles',
         },
         {
+          label: t('admin.navItems.aiAccess'),
+          to: '/ai-access',
+          icon: KeyRound,
+          permission: 'GET:/admin/ai-access/keys',
+        },
+        {
           label: t('admin.navItems.authzAudit'),
           to: '/authz-audit-logs',
           icon: ScrollText,

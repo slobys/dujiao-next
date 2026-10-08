@@ -242,6 +242,12 @@ func BuiltinRoleSeeds() []RoleSeed {
 				{Object: "/admin/settings/telegram-bot", Action: "*"},
 				{Object: "/admin/settings/telegram-bot/runtime-status", Action: "GET"},
 				// 权限管理（仅 system_admin 可操作）
+				// AI 机器凭证独立于渠道 API，仅 system_admin 能管理。
+				{Object: "/admin/ai-access/keys", Action: "GET"},
+				{Object: "/admin/ai-access/keys", Action: "POST"},
+				{Object: "/admin/ai-access/keys/:id/revoke", Action: "POST"},
+				{Object: "/admin/ai-access/keys/:id/rotate", Action: "POST"},
+				{Object: "/admin/ai-access/audit", Action: "GET"},
 				{Object: "/admin/authz/me", Action: "GET"},
 				{Object: "/admin/authz/roles", Action: "*"},
 				{Object: "/admin/authz/roles/:role", Action: "*"},

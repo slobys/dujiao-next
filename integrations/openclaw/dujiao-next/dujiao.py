@@ -13,6 +13,14 @@ from decimal import Decimal, InvalidOperation
 from urllib import error, parse, request
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+AI_READ_ROUTES = frozenset({
+    "/api/v1/admin/categories",
+    "/api/v1/admin/products",
+    "/api/v1/admin/dashboard/inventory-alerts",
+    "/api/v1/admin/dashboard/overview",
+    "/api/v1/admin/dashboard/rankings",
+})
+
 MAX_RESPONSE_BYTES = 2_000_000
 USER_AGENT = "dujiao-next-openclaw/1.0"
 
@@ -72,9 +80,11 @@ class Client:
         self.base_url = validate_base_url(base_url)
         self.opener = opener if opener is not None else make_opener()
         self._token = self.env.get("DUJIAO_ADMIN_TOKEN", "").strip()
+        self._ai_token = self.env.get("DUJIAO_AI_TOKEN", "").strip()
 
     def _request(self, method: str, path: str, *, payload=None, params=None, token=""):
-        assert path.startswith("/api/v1/admin/") or path == "/api/v1/admin/login"
+        if not (path.startswith("/api/v1/admin/") or path in {r.replace("/admin/", "/ai/", 1) for r in AI_READ_ROUTES}):
+            raise BridgeError("未授权的商城 API 路径")
         address = self.base_url + path
         if params:
             address += "?" + parse.urlencode(params)
@@ -124,6 +134,11 @@ class Client:
         return token
 
     def call(self, method: str, path: str, *, payload=None, params=None):
+        if self._ai_token:
+            if method != "GET" or path not in AI_READ_ROUTES or payload is not None:
+                raise BridgeError("AI Key 仅能调用限定的只读 API，不能创建、修改或发布商品")
+            path = path.replace("/admin/", "/ai/", 1)
+            return self._request("GET", path, params=params, token=self._ai_token)
         if not self._token:
             self._token = self._login()
         return self._request(method, path, payload=payload, params=params, token=self._token)

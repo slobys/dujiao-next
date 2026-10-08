@@ -6,6 +6,8 @@ import (
 	adproxyapp "github.com/dujiao-next/internal/modules/adproxy/application"
 	affiliateapp "github.com/dujiao-next/internal/modules/affiliate/application"
 	affiliatecontract "github.com/dujiao-next/internal/modules/affiliate/contract"
+	aiaccessapp "github.com/dujiao-next/internal/modules/aiaccess/application"
+	aiaccesscontract "github.com/dujiao-next/internal/modules/aiaccess/contract"
 	apicredentialapp "github.com/dujiao-next/internal/modules/apicredential/application"
 	apicredentialcontract "github.com/dujiao-next/internal/modules/apicredential/contract"
 	auditlogapp "github.com/dujiao-next/internal/modules/auditlog/application"
@@ -89,6 +91,7 @@ type Container struct {
 
 	// Repositories
 	AdminStore             admincontract.Store
+	AiAccessRepo           aiaccesscontract.Repository
 	UserStore              usercontract.Store
 	ExternalIdentityStore  externalidentitycontract.Store
 	EmailVerificationStore emailverificationcontract.Store
@@ -131,6 +134,7 @@ type Container struct {
 
 	// Services
 	AuthzService                  *authz.Service
+	AiAccessService               *aiaccessapp.Service
 	AuthService                   *adminauthapp.Service
 	TOTPService                   *admintotpapp.Service
 	UserTOTPService               *usertotpapp.Service

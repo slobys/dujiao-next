@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	affiliategormstore "github.com/dujiao-next/internal/modules/affiliate/infrastructure/gormstore"
+	aiaccessgormstore "github.com/dujiao-next/internal/modules/aiaccess/infrastructure/gormstore"
 	apicredentialgormstore "github.com/dujiao-next/internal/modules/apicredential/infrastructure/gormstore"
 	auditloggormstore "github.com/dujiao-next/internal/modules/auditlog/infrastructure/gormstore"
 	cardsecretgormstore "github.com/dujiao-next/internal/modules/cardsecret/infrastructure/gormstore"
@@ -39,6 +40,7 @@ import (
 func (c *Container) initRepositories() error {
 	db := gormdb.DB
 	c.AdminStore = adminstore.New(db)
+	c.AiAccessRepo = aiaccessgormstore.New(db)
 	c.UserStore = userstore.New(db)
 	c.ExternalIdentityStore = externalidentitystore.New(db)
 	c.EmailVerificationStore = emailverificationstore.New(db)

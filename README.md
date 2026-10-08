@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/slobys/dujiao-next/actions/workflows/ci.yml/badge.svg)](https://github.com/slobys/dujiao-next/actions/workflows/ci.yml) [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE) [![Docker Compose](https://img.shields.io/badge/Deploy-Docker%20Compose-2496ED?logo=docker&logoColor=white)](scripts/fork-deploy.sh)
 
-> **本仓库是个人维护的 Fork，并非上游官方发行版。** 已提供菜单式部署工具、OpenClaw/n8n 集成，以及适用于 OpenClaw、Codex、Claude Code 的第一阶段通用 MCP 服务。通用 MCP 目前只读和离线预览商品草稿，尚未提供 AI 长期服务令牌、商品自主上架或自动发布网站代码。所有集成尚需在真实商城以限权账号进行授权与联调。
+> **本仓库是个人维护的 Fork，并非上游官方发行版。** 已提供菜单式部署工具、OpenClaw/n8n 集成和通用 MCP。现可在商城后台创建、轮换、撤销具有到期时间及细粒度只读 scope 的专用 AI Key，供 OpenClaw、Codex、Claude Code 共用同一套商城读取接口。MCP 不提供自主上架、退款或自动发布网站代码；上线前应备份数据库并在真实商城完成授权和联调。
 
 **快速导航：** [一键部署](#-一键部署本-fork) · [管理与更新](#-日常管理) · [数据与备份](#-数据与备份) · [通用 MCP 接入](integrations/mcp/README.md) · [AI 接入](#-ai-接入openclaw--n8n-第一阶段) · [开发指南](#-本地开发) · [与上游的区别](#-与上游的区别)
 
@@ -19,6 +19,7 @@
 | **Fork 增强** | **独立 Docker Compose 源码一键部署、数据持久化、状态/日志/重启、冷备份、源码更新** |
 | **AI 初版** | **OpenClaw 商品/库存只读查询、下架草稿创建、经营报表与 n8n 定时 Telegram 推送模板** |
 | **通用 MCP 初版** | **Codex、Claude Code、OpenClaw 共享安全只读商品/库存/营业报表工具及离线商品草稿预览** |
+| **AI 接入管理** | **独立 AI Key、分配只读 scope、设置 1–90 天到期、即刻撤销和轮换、访问审计（后台系统设置）** |
 
 ## 🚀 一键部署（本 Fork）
 
@@ -217,7 +218,7 @@ sudo env DUJIAO_FORK_DIR=/opt/my-dujiao \
 
 已经新增 [**统一 MCP 接入指南（NAS、Windows、Codex、Claude Code、OpenClaw）**](integrations/mcp/README.md) 和 [MCP 服务程序](integrations/mcp/server.py)。此方案使用官方 MCP Python SDK，所有 AI 工具共享同一套只读 API：商品、分类、库存预警、营业日报与**离线草稿预览**。MCP 工具不会新建、发布或修改线上商品，也不会返回卡密和客户私密数据。安装 Python 虚拟环境并设置受限后台凭据即可接入；不需要重建商城 Docker 镜像。
 
-**注意：** MCP 基于现有后台 JWT 和 RBAC，当前没有长期稳定的受限机器密钥；2FA/CAPTCHA 不能被自动绕过。跨机器连接必须通过 HTTPS 或安全隧道，不允许把管理员密钥发给 AI 或把无认证 MCP 端口暴露到公网。
+**现在可用专用 AI Key 接入：** 先备份 Vultr 商城，再运行 `sudo dujiao-fork update` 更新含后端/前端的镜像；打开后台**系统设置 → AI 接入管理**，分别为 OpenClaw、Codex、Claude Code 创建只读 Key，保存到 NAS 私有 `~/.config/dujiao-next-mcp.env` 的 `DUJIAO_AI_TOKEN` 中。密钥仅创建/轮换时显示一次，可单独撤销、轮换；原有管理员 JWT 路径仍暂保留兼容但不推荐长期使用。跨主机需 HTTPS，MCP stdio 本身不对公网开放。详见 [统一 MCP 安装说明](integrations/mcp/README.md)。
 
 ### 旧版：OpenClaw Skill / n8n 独立脚本
 
@@ -233,14 +234,14 @@ cp -a integrations/openclaw/dujiao-next "$HOME/.openclaw/workspace/skills/"
 openclaw skills list
 ```
 
-配置受限管理员 API 凭据后，OpenClaw 可使用：
+配置从商城**AI 接入管理**获取的 `DUJIAO_AI_TOKEN` 或旧版受限管理员凭据后，OpenClaw 可使用：
 
 ```bash
 python3 "$HOME/.openclaw/workspace/skills/dujiao-next/dujiao.py" categories
 python3 "$HOME/.openclaw/workspace/skills/dujiao-next/dujiao.py" daily-report --date yesterday --tz Asia/Shanghai
 ```
 
-n8n 模板可每天北京时间 09:00 通过 SSH 在 NAS 执行日报发送；导入后仍需自行配置 SSH 凭据、商城授权及 Telegram Token，并由用户启用工作流。**短期 JWT 到期、2FA 或 CAPTCHA 会阻止无人值守登录，现阶段不能保证所有认证配置下的日报都能自动持续发送。**不得为自动化关闭安全验证。
+n8n 模板可每天北京时间 09:00 通过 SSH 在 NAS 执行日报发送；导入后仍需自行配置 SSH 凭据、商城 AI Key/限权 JWT 及 Telegram Token，并由用户启用工作流。**AI Key 也有明确到期时间，撤销/轮换后需更新所有客户端。**旧管理员 JWT 仍会过期，不得为了无人值守关闭 2FA 或验证码。
 
 完整设置、权限安全、草稿审批和 n8n 操作步骤见 **[AI 接入说明](integrations/openclaw/README.md)**。
 

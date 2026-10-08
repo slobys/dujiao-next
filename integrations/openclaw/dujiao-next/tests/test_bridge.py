@@ -170,6 +170,65 @@ class AuthAndReadTests(unittest.TestCase):
         self.assertNotIn(secret, str(raised.exception))
 
 
+
+class DedicatedAIKeyTests(unittest.TestCase):
+    def test_ai_key_uses_isolated_readonly_route(self):
+        opener = Opener(packet([{"id": 7, "slug": "cloud", "title": {"zh-CN": "云商品"},
+                                 "api_secret": "DO_NOT_LEAK"}]))
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            bridge.main(["products"], environ={
+                "DUJIAO_BASE_URL": "https://shop.example.com",
+                "DUJIAO_AI_TOKEN": "djai_testing",
+                "DUJIAO_ADMIN_TOKEN": "JWT_SHOULD_NOT_BE_USED",
+            }, opener=opener)
+        self.assertEqual(len(opener.calls), 1)
+        self.assertEqual(opener.calls[0].get_method(), "GET")
+        self.assertEqual(opener.calls[0].full_url.split("?")[0],
+                         "https://shop.example.com/api/v1/ai/products")
+        self.assertEqual(opener.calls[0].get_header("Authorization"),
+                         "Bearer djai_testing")
+        self.assertNotIn("DO_NOT_LEAK", output.getvalue())
+
+    def test_ai_key_disallows_creating_drafts_even_if_confirmed(self):
+        opener = Opener()
+        with self.assertRaisesRegex(bridge.BridgeError, "仅能调用限定的只读"):
+            bridge.main(["draft-product", "--category-id", "1", "--slug", "demo",
+                         "--title", "商品", "--price", "19.99", "--execute",
+                         "--confirm-slug", "demo"], environ={
+                "DUJIAO_BASE_URL": "https://shop.example.com",
+                "DUJIAO_AI_TOKEN": "djai_testing",
+            }, opener=opener)
+        self.assertEqual(opener.calls, [])
+
+    def test_ai_key_route_allowlist_denies_unrelated_admin_paths(self):
+        opener = Opener()
+        client = bridge.Client("https://shop.example.com", environ={
+            "DUJIAO_AI_TOKEN": "djai_testing",
+            "DUJIAO_ADMIN_USERNAME": "admin",
+            "DUJIAO_ADMIN_PASSWORD": "password",
+        }, opener=opener)
+        with self.assertRaises(bridge.BridgeError):
+            client.call("GET", "/api/v1/admin/users")
+        with self.assertRaises(bridge.BridgeError):
+            client.call("POST", "/api/v1/admin/products", payload={})
+        self.assertEqual(opener.calls, [])
+
+    def test_ai_key_daily_report_only_uses_report_routes(self):
+        opener = Opener(packet({"currency": "CNY", "kpi": {"gmv_paid": "12.00"}}),
+                        packet({"top_products": []}))
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            bridge.main(["daily-report", "--date", "2026-10-07"], environ={
+                "DUJIAO_BASE_URL": "https://shop.example.com",
+                "DUJIAO_AI_TOKEN": "djai_testing",
+            }, opener=opener)
+        self.assertEqual(len(opener.calls), 2)
+        self.assertIn("/api/v1/ai/dashboard/overview", opener.calls[0].full_url)
+        self.assertIn("/api/v1/ai/dashboard/rankings", opener.calls[1].full_url)
+        self.assertIn("12.00", output.getvalue())
+
+
 class ReportTests(unittest.TestCase):
     def test_custom_daily_range_is_inclusive_last_second(self):
         window = bridge.report_window(date(2026, 10, 7), "Asia/Shanghai")
