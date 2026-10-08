@@ -44,6 +44,7 @@ func (c *Container) initRepositories() error {
 	c.AiRemoteRepo = aiaccessgormstore.New(db)
 	c.AiActionRepo = aiaccessgormstore.New(db)
 	c.AiOrderReviewRepo = aiaccessgormstore.New(db)
+	c.AiOrderCancellationRepo = aiaccessgormstore.New(db)
 	c.UserStore = userstore.New(db)
 	c.ExternalIdentityStore = externalidentitystore.New(db)
 	c.EmailVerificationStore = emailverificationstore.New(db)

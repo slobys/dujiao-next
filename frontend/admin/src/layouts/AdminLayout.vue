@@ -27,6 +27,7 @@ import {
   Gift,
   SlidersHorizontal,
   ShieldCheck,
+  ShieldAlert,
   ScrollText,
   ChevronDown,
   ChevronRight,
@@ -536,6 +537,12 @@ const navGroups = computed<NavGroup[]>(() => {
           to: '/ai-order-reviews',
           icon: ShieldCheck,
           permission: 'GET:/admin/ai-access/order-reviews',
+        },
+        {
+          label: t('admin.navItems.aiOrderCancellations'),
+          to: '/ai-order-cancellations',
+          icon: ShieldAlert,
+          permission: 'GET:/admin/ai-access/order-cancellations',
         },
         {
           label: t('admin.navItems.authzAudit'),

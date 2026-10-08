@@ -4,6 +4,8 @@ import (
 	"strings"
 	"time"
 
+	fulfillmentdomain "github.com/dujiao-next/internal/modules/fulfillment/domain"
+	orderdomain "github.com/dujiao-next/internal/modules/order/domain"
 	paymentdomain "github.com/dujiao-next/internal/modules/payment/domain"
 
 	affiliatecontract "github.com/dujiao-next/internal/modules/affiliate/contract"
@@ -13,6 +15,7 @@ import (
 	productcontract "github.com/dujiao-next/internal/modules/catalog/product/contract"
 	productgormstore "github.com/dujiao-next/internal/modules/catalog/product/store/gormstore"
 	couponcontract "github.com/dujiao-next/internal/modules/coupon/contract"
+	coupondomain "github.com/dujiao-next/internal/modules/coupon/domain"
 	coupongormstore "github.com/dujiao-next/internal/modules/coupon/infrastructure/gormstore"
 	fulfillmentcontract "github.com/dujiao-next/internal/modules/fulfillment/contract"
 	fulfillmentgormstore "github.com/dujiao-next/internal/modules/fulfillment/infrastructure/gormstore"
@@ -96,6 +99,36 @@ func (tx transaction) ResellerOrders() ordercontract.ResellerOrderStore {
 
 func (tx transaction) ResellerAccounting() resellercontract.AccountingLedgerStore {
 	return resellergormstore.New(tx.db)
+}
+
+// HasAnySettlementArtifactsForOrder is used ONLY for approved AI strict
+// unpaid cancellation. Query through the transaction handle (SQLite safe).
+// Any payment, refund, fulfillment, coupon usage or child order,
+// including soft-deleted records, blocks the action. Missing tables fail closed.
+func (tx transaction) HasAnySettlementArtifactsForOrder(orderID uint) (bool, error) {
+	if orderID == 0 {
+		return true, nil
+	}
+	for _, model := range []interface{}{
+		&paymentdomain.Payment{}, &orderdomain.OrderRefundRecord{}, &fulfillmentdomain.Fulfillment{}, &coupondomain.CouponUsage{},
+	} {
+		var count int64
+		if err := tx.db.Unscoped().Model(model).Where("order_id = ?", orderID).Count(&count).Error; err != nil {
+			return true, err
+		}
+		if count > 0 {
+			return true, nil
+		}
+	}
+	// Even a soft-deleted child or coupon usage makes this a complex order.
+	var childCount int64
+	if err := tx.db.Unscoped().Model(&orderdomain.Order{}).Where("parent_id = ?", orderID).Count(&childCount).Error; err != nil {
+		return true, err
+	}
+	if childCount > 0 {
+		return true, nil
+	}
+	return false, nil
 }
 
 func (tx transaction) ExpirePendingPaymentsByOrderIDs(orderIDs []uint, expiredAt time.Time) (int64, error) {

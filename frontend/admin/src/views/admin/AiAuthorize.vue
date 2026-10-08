@@ -7,7 +7,7 @@ import { notifyError } from '@/utils/notify'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 
-type Scope = 'catalog:read' | 'inventory:read' | 'report:read' | 'catalog:draft:write' | 'catalog:publish:request' | 'orders:read' | 'orders:review:request'
+type Scope = 'catalog:read' | 'inventory:read' | 'report:read' | 'catalog:draft:write' | 'catalog:publish:request' | 'orders:read' | 'orders:review:request' | 'orders:cancel:request'
 type Request = {
   id: string
   client_id: string
@@ -23,6 +23,7 @@ const text = {
     catalog: '查看商品与分类', inventory: '查看库存预警', report: '查看营业汇总',
     draftWrite: '自动创建默认下架的商品草稿（无需每次审批）', publishRequest: '申请商品上架/下架（每次必须人工批准）',
     ordersRead: '读取脱敏订单状态、金额和时间（不含客户信息/卡密）', ordersReview: '提交订单售后审核工单（不直接退款/发货/取消）',
+    strictCancel: '申请严格未付款订单取消（必须人工批准；有任何支付记录则拒绝）',
     writeWarning: '商品写入、订单数据及售后申请权限均默认不勾选。仅向可信任的 AI 客户端授权；售后审核不等于执行退款。',
     approve: '批准并连接', cancel: '取消', fail: '连接请求已经过期或无效，请返回 AI 工具重试。',
     none: '至少选择一个权限', risk: '确认这是你主动发起的连接。如果你不认识此客户端或返回地址，请拒绝。',
@@ -34,6 +35,7 @@ const text = {
     catalog: '查看商品與分類', inventory: '查看庫存警示', report: '查看營業摘要',
     draftWrite: '自動建立未上架商品草稿', publishRequest: '申請上架/下架（每次需人工批准）',
     ordersRead: '讀取去識別化訂單狀態與金額', ordersReview: '提交售後人工跟進工單（不直接退款/出貨）',
+    strictCancel: '申請嚴格未付款訂單取消（人工批准；有任何支付紀錄皆拒絕）',
     writeWarning: '商品寫入、訂單資料和售後申請權限均預設不勾選，只向信任的 AI 授權；售後工單不執行退款。',
     approve: '批准並連接', cancel: '取消', fail: '授權要求已過期或無效，請返回 AI 工具重試。',
     none: '請至少選取一項權限', risk: '請確認這是你主動發起的連接。不認識的應用或返回網址應拒絕。',
@@ -45,6 +47,7 @@ const text = {
     catalog: 'Products and categories', inventory: 'Inventory alerts', report: 'Sales summary',
     draftWrite: 'Create unpublished product drafts automatically', publishRequest: 'Request product publish/unpublish (always requires human approval)',
     ordersRead: 'Read sanitized order status and amounts (no customer/private delivery data)', ordersReview: 'Submit after-sales triage tickets (no automatic refund/delivery/cancel)',
+    strictCancel: 'Request narrowly restricted unpaid order cancellation (human approval required; any payment record blocks)',
     writeWarning: 'Product write, order data and after-sales review scopes start unchecked. Grant them only to trusted AI clients. Accepting after-sales tickets never initiates refunds.',
     approve: 'Approve and connect', cancel: 'Cancel', fail: 'Authorization expired or invalid. Restart the connection from your AI tool.',
     none: 'Select at least one scope', risk: 'Only approve connections you initiated. Reject unrecognized apps or return addresses.',
@@ -62,7 +65,7 @@ const error = ref('')
 const complete = ref(false)
 const scopeLabel = (scope: Scope) =>
   scope === 'catalog:read' ? l.value.catalog : scope === 'inventory:read' ? l.value.inventory :
-  scope === 'report:read' ? l.value.report : scope === 'catalog:draft:write' ? l.value.draftWrite : scope === 'catalog:publish:request' ? l.value.publishRequest : scope === 'orders:read' ? l.value.ordersRead : l.value.ordersReview
+  scope === 'report:read' ? l.value.report : scope === 'catalog:draft:write' ? l.value.draftWrite : scope === 'catalog:publish:request' ? l.value.publishRequest : scope === 'orders:read' ? l.value.ordersRead : scope === 'orders:review:request' ? l.value.ordersReview : l.value.strictCancel
 const toggle = (scope: Scope, enabled: boolean) => {
   checked.value = enabled ? Array.from(new Set([...checked.value, scope])) : checked.value.filter(v => v !== scope)
 }
@@ -144,7 +147,7 @@ onMounted(fetchRequest)
               <span class="text-sm">{{ scopeLabel(scope) }}</span>
             </label>
           </fieldset>
-          <p v-if="details.scopes.some(s => s === 'catalog:draft:write' || s === 'catalog:publish:request' || s === 'orders:read' || s === 'orders:review:request')" class="rounded-lg border p-3 text-sm text-muted-foreground">{{ l.writeWarning }}</p>
+          <p v-if="details.scopes.some(s => s === 'catalog:draft:write' || s === 'catalog:publish:request' || s === 'orders:read' || s === 'orders:review:request' || s === 'orders:cancel:request')" class="rounded-lg border p-3 text-sm text-muted-foreground">{{ l.writeWarning }}</p>
           <p class="rounded-lg border p-3 text-sm text-muted-foreground">{{ l.risk }}</p>
           <div class="flex flex-wrap gap-3">
             <Button :disabled="busy || checked.length === 0" @click="approve">{{ l.approve }}</Button>

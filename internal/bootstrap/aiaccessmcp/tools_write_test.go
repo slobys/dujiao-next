@@ -285,3 +285,94 @@ func TestMCPOrderSummaryRedactionAndTriage(t *testing.T) {
 		t.Fatal("human triage acceptance changed paid order")
 	}
 }
+
+func TestMCPStrictUnpaidCancellationRequiresScopeAndOnlySubmitsRequest(t *testing.T) {
+	services, _, remote := fixture(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	store := &aiOrderStoreStub{order: orderdomain.Order{
+		ID: 2002, OrderNo: "UNPAID-PRIVATE-2002",
+		Currency: "CNY", Status: "pending_payment",
+		TotalAmount:      money.FromDecimal(decimal.RequireFromString("88.00")),
+		WalletPaidAmount: money.FromDecimal(decimal.Zero),
+		GuestEmail:       "PRIVATE@example.invalid",
+		CreatedAt:        now.Add(-time.Minute), UpdatedAt: now,
+	}}
+	services.OrderStore = store
+	if _, err := remote.SetConfig(context.Background(), true, "https://shop.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	access := issueOAuthToken(t, remote, "orders:cancel:request")
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Any("/mcp", New(services).Serve)
+	server := httptest.NewServer(router)
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	client := mcp.NewClient(&mcp.Implementation{Name: "cancel-client", Version: "1"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{
+		Endpoint:             server.URL + "/mcp",
+		HTTPClient:           &http.Client{Transport: rewritingTransport{Base: http.DefaultTransport, Token: access}},
+		DisableStandaloneSSE: true, MaxRetries: -1,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	tools, err := session.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	visible := map[string]bool{}
+	for _, tool := range tools.Tools {
+		visible[tool.Name] = true
+	}
+	if !visible["request_strict_unpaid_order_cancellation"] ||
+		!visible["get_strict_unpaid_order_cancellation_status"] {
+		t.Fatalf("missing cancellation tools: %+v", visible)
+	}
+	if visible["list_order_summaries"] || visible["request_order_after_sales_review"] || visible["create_product_draft"] {
+		t.Fatalf("cancellation permission escalated: %+v", visible)
+	}
+	pending, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "request_strict_unpaid_order_cancellation",
+		Arguments: map[string]any{"order_id": 2002},
+	})
+	if err != nil || pending.IsError {
+		t.Fatalf("submission failed: %+v %v", pending, err)
+	}
+	result, ok := pending.StructuredContent.(map[string]any)
+	if !ok || result["status"] != "pending" || result["executed"] != false ||
+		result["requires_human_approval"] != true {
+		t.Fatalf("submission mutated order: %+v", pending)
+	}
+	if strings.Contains(fmt.Sprint(result), "PRIVATE@example.invalid") {
+		t.Fatal("MCP leaked order email")
+	}
+	if store.order.Status != "pending_payment" {
+		t.Fatal("MCP canceled order without approval")
+	}
+	requestID, _ := result["request_id"].(string)
+	if requestID == "" {
+		t.Fatal("missing request id")
+	}
+	persisted, err := services.AiOrderCancellationService.GetForAdmin(ctx, requestID)
+	if err != nil || persisted == nil || persisted.Status != "pending" || persisted.Currency != "CNY" {
+		t.Fatalf("wrong persisted request %+v %v", persisted, err)
+	}
+	lookup, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "get_strict_unpaid_order_cancellation_status",
+		Arguments: map[string]any{"request_id": requestID},
+	})
+	if err != nil || lookup.IsError {
+		t.Fatalf("cannot read own request: %+v %v", lookup, err)
+	}
+	store.order.Status = "paid"
+	invalid, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "request_strict_unpaid_order_cancellation",
+		Arguments: map[string]any{"order_id": 2002},
+	})
+	if err == nil && !invalid.IsError {
+		t.Fatal("accepted cancellation request for paid order")
+	}
+}

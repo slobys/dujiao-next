@@ -14,6 +14,7 @@ import (
 	aiapp "github.com/dujiao-next/internal/modules/aiaccess/application"
 	aidomain "github.com/dujiao-next/internal/modules/aiaccess/domain"
 	productwrite "github.com/dujiao-next/internal/modules/catalog/product/application/write"
+	orderapp "github.com/dujiao-next/internal/modules/order/application"
 	ordercontract "github.com/dujiao-next/internal/modules/order/contract"
 	orderdomain "github.com/dujiao-next/internal/modules/order/domain"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -300,4 +301,66 @@ func (h *Handler) registerOrderTools(server *mcp.Server, key *aidomain.Key, chec
 			}, nil
 		})
 	}
+	h.registerStrictUnpaidCancellationTools(server, key, check)
+}
+
+type StrictUnpaidCancelInput struct {
+	OrderID uint `json:"order_id"`
+}
+
+func (h *Handler) registerStrictUnpaidCancellationTools(server *mcp.Server, key *aidomain.Key, check scopeCheck) {
+	if !aiapp.HasScope(key.Scopes, aiapp.ScopeOrderCancelRequest) {
+		return
+	}
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "request_strict_unpaid_order_cancellation",
+		Description: "Submit a request for HUMAN APPROVAL to cancel a strictly unpaid single order. This tool NEVER cancels immediately. When approved, transaction rejects any order with payments (including deleted/failed/success), refunds, fulfillment, wallet-paid amount, coupons, referrals, child orders or changed status. No refund.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in StrictUnpaidCancelInput) (*mcp.CallToolResult, map[string]any, error) {
+		if err := check(ctx, aiapp.ScopeOrderCancelRequest, "request_strict_unpaid_order_cancellation"); err != nil {
+			return nil, nil, err
+		}
+		if in.OrderID == 0 {
+			return nil, nil, errors.New("invalid order id")
+		}
+		order, err := h.services.OrderStore.GetByID(in.OrderID)
+		if err != nil || order == nil {
+			return nil, nil, errors.New("order not found")
+		}
+		snap := orderapp.AICancelSnapshot{
+			OrderID: order.ID, OrderNo: order.OrderNo, Currency: order.Currency, Status: order.Status,
+			Amount: order.TotalAmount.String(), UpdatedAt: order.UpdatedAt,
+		}
+		if !orderapp.AIUnpaidCancellationEligible(order, snap) {
+			return nil, nil, errors.New("strict cancellation unavailable; use regular human after-sales review")
+		}
+		req, err := h.services.AiOrderCancellationService.Submit(ctx, key, snapshotOrder(order))
+		if err != nil {
+			return nil, nil, errors.New("cannot create cancellation request")
+		}
+		return nil, map[string]any{
+			"request_id": req.ID, "order_id": req.OrderID, "status": req.Status,
+			"executed": false, "requires_human_approval": true,
+			"expires_at":       req.ExpiresAt,
+			"final_validation": "Only after human approval and zero historical payment/refund/fulfillment records, with exact order snapshot match",
+			"refund_executed":  false,
+		}, nil
+	})
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_strict_unpaid_order_cancellation_status",
+		Description: "Read ONLY the status of your own strict unpaid cancellation request, without customer data.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in ActionLookup) (*mcp.CallToolResult, map[string]any, error) {
+		if err := check(ctx, aiapp.ScopeOrderCancelRequest, "get_strict_unpaid_order_cancellation_status"); err != nil {
+			return nil, nil, err
+		}
+		req, err := h.services.AiOrderCancellationService.Owned(ctx, key, in.RequestID)
+		if err != nil {
+			return nil, nil, errors.New("request not found")
+		}
+		return nil, map[string]any{
+			"request_id": req.ID, "order_id": req.OrderID, "status": req.Status,
+			"expires_at": req.ExpiresAt, "completed_at": req.CompletedAt,
+			"failure_code":    req.FailureCode,
+			"refund_executed": false,
+		}, nil
+	})
 }

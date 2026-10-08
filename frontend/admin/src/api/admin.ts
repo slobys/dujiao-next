@@ -625,6 +625,9 @@ export const adminAPI = {
   acceptAiOrderReview: (id: string) => api.post(`/admin/ai-access/order-reviews/${encodeURIComponent(id)}/accept`),
   rejectAiOrderReview: (id: string) => api.post(`/admin/ai-access/order-reviews/${encodeURIComponent(id)}/reject`),
   resolveAiOrderReview: (id: string) => api.post(`/admin/ai-access/order-reviews/${encodeURIComponent(id)}/resolve`),
+  listAiOrderCancellations: () => api.get('/admin/ai-access/order-cancellations'),
+  approveAiOrderCancellation: (id: string) => api.post(`/admin/ai-access/order-cancellations/${encodeURIComponent(id)}/approve`),
+  rejectAiOrderCancellation: (id: string) => api.post(`/admin/ai-access/order-cancellations/${encodeURIComponent(id)}/reject`),
 
   // Channel Clients (Bot Clients)
   getChannelClients: () => api.get('/admin/channel-clients'),

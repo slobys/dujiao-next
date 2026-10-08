@@ -334,6 +334,12 @@ const routes = [
         meta: { permission: 'GET:/admin/ai-access/order-reviews' },
       },
       {
+        path: 'ai-order-cancellations',
+        name: 'ai-order-cancellations',
+        component: () => import('@/views/admin/AiOrderCancellations.vue'),
+        meta: { permission: 'GET:/admin/ai-access/order-cancellations' },
+      },
+      {
         path: 'ai-authorize',
         name: 'ai-authorize',
         component: () => import('@/views/admin/AiAuthorize.vue'),

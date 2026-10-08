@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/slobys/dujiao-next/actions/workflows/ci.yml/badge.svg)](https://github.com/slobys/dujiao-next/actions/workflows/ci.yml) [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE) [![Docker Compose](https://img.shields.io/badge/Deploy-Docker%20Compose-2496ED?logo=docker&logoColor=white)](scripts/fork-deploy.sh)
 
-> **本仓库是个人维护的 Fork，并非上游官方发行版。** 已提供一键部署、OpenClaw/n8n 集成与 **AI 接入中心 2.0**：在商城后台管理远程 MCP 和浏览器 OAuth+PKCE 授权；3.0 已新增受限的商品草稿创建、商品上架审批、脱敏订单查询与售后人工审核工单。原有本地 stdio MCP/AI Key 仍兼容。远程 MCP 不提供自动上架、退款或支付修改；上线前务必备份并在目标服务器实际联调。
+> **本仓库是个人维护的 Fork，并非上游官方发行版。** 已提供一键部署、OpenClaw/n8n 集成与 **AI 接入中心 2.0**：在商城后台管理远程 MCP 和浏览器 OAuth+PKCE 授权；3.0 已新增受限的商品草稿创建与上架审批、脱敏订单查询、售后工单，以及严格未付款订单的一次性取消审批。原有本地 stdio MCP/AI Key 仍兼容。远程 MCP 不提供自动上架、退款或支付修改；上线前务必备份并在目标服务器实际联调。
 
 **快速导航：** [一键部署](#-一键部署本-fork) · [管理与更新](#-日常管理) · [数据与备份](#-数据与备份) · [通用 MCP 接入](integrations/mcp/README.md) · [AI 接入](integrations/mcp/README.md) · [开发指南](#-本地开发) · [与上游的区别](#-与上游的区别)
 
@@ -23,6 +23,7 @@
 | **AI 接入中心 2.0** | **内置远程 HTTP MCP（默认关闭）、OAuth PKCE 浏览器授权、复制配置式远程连接、1 小时访问令牌与旋转刷新令牌** |
 | **AI 接入中心 3.0（第一批）** | **AI 自动创建未上架、零库存商品草稿；提交上架/下架申请；后台逐条批准/拒绝；数据库并发保护、审计与撤销** |
 | **AI 订单售后（第二批）** | **AI 查询脱敏订单状态、金额和时间；提交售后人工跟进工单；后台接收/拒绝/完成；无退款、取消或发货权限** |
+| **AI 严格取消审批（第三批）** | **完全未付款、无任何支付/退款/交付记录的独立订单，经管理员批准才执行取消；其他订单仅人工处理** |
 
 ## 🚀 一键部署（本 Fork）
 
@@ -232,6 +233,10 @@ sudo env DUJIAO_FORK_DIR=/opt/my-dujiao \
 ### AI 接入中心 3.0 第二批：订单与售后
 
 新增 `orders:read` 权限用于查询不包含客户隐私、卡密和付款凭证的订单摘要；`orders:review:request` 用于让 AI 提交交付延迟、支付异常、退款建议、取消建议等固定类别的售后工单。**后台新菜单“AI 订单售后审核”用于接收、拒绝与标记人工跟进完成。** 接收工单不会调用任何退款、订单取消或发货接口，真正的售后操作仍须管理员在原订单管理页面手动完成。两个新增权限默认不授权，原有客户端权限不变。详见 [完整说明](integrations/mcp/README.md)。
+
+### AI 接入中心 3.0 第三批：严格未付款取消审批
+
+新增 `orders:cancel:request` 权限，AI 只能提出取消申请；后台在**AI 未付款取消审批**页面逐单确认。系统会锁定订单并确认从未发生过支付尝试、没有钱包付款/退款/交付，也没有优惠券或子订单，再调用已有订单事务取消。**有任何支付记录就不允许 AI 自动取消，不论支付失败或记录是否被删除。** 真正资金退款仍不开放。详见 [第三批说明](integrations/mcp/README.md)。
 
 ### 兼容：NAS/Windows 本地 MCP + 静态 AI Key
 

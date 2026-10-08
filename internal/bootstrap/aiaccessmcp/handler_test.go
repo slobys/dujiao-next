@@ -44,13 +44,13 @@ func fixture(t *testing.T) (*container.Container, *app.Service, *app.RemoteServi
 	sqlDB, _ := db.DB()
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err = db.AutoMigrate(&domain.Key{}, &domain.Audit{}, &domain.RemoteConfig{}, &domain.OAuthClient{}, &domain.AuthorizationRequest{}, &domain.OAuthRefresh{}, &domain.ActionRequest{}, &domain.OrderReview{}); err != nil {
+	if err = db.AutoMigrate(&domain.Key{}, &domain.Audit{}, &domain.RemoteConfig{}, &domain.OAuthClient{}, &domain.AuthorizationRequest{}, &domain.OAuthRefresh{}, &domain.ActionRequest{}, &domain.OrderReview{}, &domain.OrderCancellation{}); err != nil {
 		t.Fatal(err)
 	}
 	store := gormstore.New(db)
 	keys := app.New(store)
 	remote := app.NewRemote(store, keys)
-	return &container.Container{AiAccessService: keys, AiRemoteService: remote, AiActionService: app.NewActions(store), AiOrderReviewService: app.NewOrderReviews(store)}, keys, remote
+	return &container.Container{AiAccessService: keys, AiRemoteService: remote, AiActionService: app.NewActions(store), AiOrderReviewService: app.NewOrderReviews(store), AiOrderCancellationService: app.NewOrderCancellations(store)}, keys, remote
 }
 func issueOAuthToken(t *testing.T, remote *app.RemoteService, scopes string) string {
 	t.Helper()

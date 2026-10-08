@@ -471,3 +471,90 @@ func IsTransitionAllowed(current, target string) bool {
 	}
 	return nexts[target]
 }
+
+// aiPaymentAttemptInspector MUST inspect the payments table through the SAME
+// database transaction as the locked order. Unsupported stores fail closed.
+type aiPaymentAttemptInspector interface {
+	HasAnySettlementArtifactsForOrder(uint) (bool, error)
+}
+
+type AICancelSnapshot struct {
+	OrderID   uint
+	OrderNo   string
+	Currency  string
+	Status    string
+	Amount    string
+	UpdatedAt time.Time
+}
+
+// AIUnpaidCancellationEligible is a deliberately narrow subset of normal
+// merchant cancellation: no paid money, coupon, parent/child, referral/reseller,
+// or fulfillment. Actual payment attempt history is checked under DB lock.
+// Never call the general UpdateOrderStatus API on AI's behalf.
+func AIUnpaidCancellationEligible(order *orderdomain.Order, snapshot AICancelSnapshot) bool {
+	if order == nil || order.ID == 0 || order.ID != snapshot.OrderID ||
+		order.OrderNo != snapshot.OrderNo || order.Currency != snapshot.Currency || order.Status != constants.OrderStatusPendingPayment ||
+		snapshot.Status != constants.OrderStatusPendingPayment ||
+		!order.UpdatedAt.Equal(snapshot.UpdatedAt) ||
+		order.TotalAmount.String() != snapshot.Amount ||
+		order.PaidAt != nil || order.RefundedAmount.Decimal.Sign() != 0 ||
+		order.WalletPaidAmount.Decimal.Sign() != 0 ||
+		order.ParentID != nil || len(order.Children) != 0 ||
+		order.CouponID != nil || order.AffiliateProfileID != nil || order.AffiliateCode != "" ||
+		order.ResellerID != nil || order.Fulfillment != nil ||
+		order.CanceledAt != nil {
+		return false
+	}
+	return true
+}
+
+// CancelStrictlyUnpaidForAI executes stock/secret release through the
+// EXISTING order-domain cancellation transaction, not direct SQL.
+// No payment attempt of ANY status may have ever existed for this order.
+// The locked order is rechecked against the exact human-approved snapshot.
+// A failed precondition produces zero order, stock, wallet or refund changes.
+func (s *OrderService) CancelStrictlyUnpaidForAI(snapshot AICancelSnapshot) (*orderdomain.Order, error) {
+	if snapshot.OrderID == 0 || snapshot.UpdatedAt.IsZero() {
+		return nil, ErrOrderCancelNotAllowed
+	}
+	var updated *orderdomain.Order
+	now := time.Now().UTC()
+	err := s.orderStore.WithinTransaction(func(tx ordercontract.Transaction) error {
+		inspector, ok := tx.(aiPaymentAttemptInspector)
+		if !ok {
+			return ErrOrderCancelNotAllowed
+		}
+		locked, err := tx.Orders().GetByIDForUpdateWithChildren(snapshot.OrderID)
+		if err != nil {
+			return ErrOrderFetchFailed
+		}
+		if !AIUnpaidCancellationEligible(locked, snapshot) {
+			return ErrOrderCancelNotAllowed
+		}
+		// A pending_payment order can still have an online SUCCESS attempt!
+		// Exclude all initiated, pending, successful, superseded and historical
+		// payment attempts, even soft-deleted attempts.
+		exists, err := inspector.HasAnySettlementArtifactsForOrder(snapshot.OrderID)
+		if err != nil {
+			return ErrOrderFetchFailed
+		}
+		if exists {
+			return ErrOrderCancelNotAllowed
+		}
+		// No coupon, wallet-paid amount, affiliate, reseller or child order is
+		// permitted in this narrow path. Reuse existing stock/card release logic.
+		updates := map[string]interface{}{"canceled_at": now, "updated_at": now}
+		if err := s.cancelSingleOrderInTx(tx, locked, constants.OrderStatusCanceled, updates); err != nil {
+			return err
+		}
+		locked.Status = constants.OrderStatusCanceled
+		locked.CanceledAt = &now
+		locked.UpdatedAt = now
+		updated = locked
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return updated, nil
+}

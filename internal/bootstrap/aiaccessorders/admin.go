@@ -21,6 +21,7 @@ func RegisterAdminRoutes(routes gin.IRoutes, services *container.Container) {
 	routes.POST("/ai-access/order-reviews/:id/accept", h.Accept)
 	routes.POST("/ai-access/order-reviews/:id/reject", h.Reject)
 	routes.POST("/ai-access/order-reviews/:id/resolve", h.Resolve)
+	RegisterCancellationRoutes(routes, services)
 }
 func adminID(c *gin.Context) uint {
 	value, _ := c.Get("admin_id")

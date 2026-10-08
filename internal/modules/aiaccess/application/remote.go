@@ -149,7 +149,7 @@ func hashOpaque(raw string) string {
 // The client may request the full supported list, but the consent UI must
 // default all write/request scopes to unchecked; scope grants are user-controlled.
 func DefaultOAuthScopes() []string {
-	return []string{ScopeCatalog, ScopeInventory, ScopeReport, ScopeDraftWrite, ScopePublishRequest, ScopeOrdersRead, ScopeOrderReviewRequest}
+	return []string{ScopeCatalog, ScopeInventory, ScopeReport, ScopeDraftWrite, ScopePublishRequest, ScopeOrdersRead, ScopeOrderReviewRequest, ScopeOrderCancelRequest}
 }
 func oauthScopes(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)

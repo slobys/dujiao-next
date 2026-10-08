@@ -117,3 +117,131 @@ func (s *Store) ProcessOrderReview(ctx context.Context, id string, admin uint, a
 	}
 	return next, nil
 }
+
+func (s *Store) CreateOrderCancellation(ctx context.Context, item *domain.OrderCancellation, audit *domain.Audit, expectedTokenHash string) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var key domain.Key
+		err := tx.Where("key_id = ? AND token_hash = ? AND revoked_at IS NULL AND expires_at > ?", item.KeyID, expectedTokenHash, time.Now().UTC()).First(&key).Error
+		if err != nil {
+			return err
+		}
+		if !validScope(key.Scopes, "orders:cancel:request") {
+			return gorm.ErrRecordNotFound
+		}
+		if err = tx.Create(item).Error; err != nil {
+			return err
+		}
+		return tx.Create(audit).Error
+	})
+}
+func (s *Store) GetOrderCancellation(ctx context.Context, id string) (*domain.OrderCancellation, error) {
+	var item domain.OrderCancellation
+	err := s.db.WithContext(ctx).Where("id = ?", id).First(&item).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+func (s *Store) ListOrderCancellations(ctx context.Context, limit int) ([]domain.OrderCancellation, error) {
+	var records []domain.OrderCancellation
+	err := s.db.WithContext(ctx).Order("created_at DESC").Limit(limit).Find(&records).Error
+	return records, err
+}
+func (s *Store) ClaimOrderCancellation(ctx context.Context, id string, admin uint, now time.Time) (bool, error) {
+	claimed := false
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var request domain.OrderCancellation
+		err := tx.Where("id = ? AND status = ? AND expires_at > ?", id, domain.ActionPending, now).First(&request).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		var key domain.Key
+		err = tx.Where("key_id = ? AND revoked_at IS NULL AND expires_at > ?", request.KeyID, now).First(&key).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if !validScope(key.Scopes, "orders:cancel:request") {
+			return nil
+		}
+		r := tx.Model(&domain.OrderCancellation{}).
+			Where("id = ? AND status = ? AND expires_at > ?", id, domain.ActionPending, now).
+			Updates(map[string]interface{}{"status": domain.ActionExecuting, "reviewed_by": admin, "reviewed_at": now, "updated_at": now})
+		if r.Error != nil {
+			return r.Error
+		}
+		if r.RowsAffected != 1 {
+			return nil
+		}
+		audit := &domain.Audit{
+			KeyID: request.KeyID, ActorAdminID: admin, Action: "order_cancel_approve",
+			Route: "ai/order_cancellation", Result: "claimed", CreatedAt: now,
+		}
+		if err = tx.Create(audit).Error; err != nil {
+			return err
+		}
+		claimed = true
+		return nil
+	})
+	return claimed && err == nil, err
+}
+func (s *Store) RejectOrderCancellation(ctx context.Context, id string, admin uint, now time.Time) (bool, error) {
+	rejected := false
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var item domain.OrderCancellation
+		err := tx.Where("id = ? AND status = ?", id, domain.ActionPending).First(&item).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		r := tx.Model(&domain.OrderCancellation{}).
+			Where("id = ? AND status = ?", id, domain.ActionPending).
+			Updates(map[string]interface{}{"status": domain.ActionRejected, "reviewed_by": admin, "reviewed_at": now, "updated_at": now})
+		if r.Error != nil {
+			return r.Error
+		}
+		if r.RowsAffected != 1 {
+			return nil
+		}
+		if err = tx.Create(&domain.Audit{
+			KeyID: item.KeyID, ActorAdminID: admin, Action: "order_cancel_reject",
+			Route: "ai/order_cancellation", Result: "rejected", CreatedAt: now,
+		}).Error; err != nil {
+			return err
+		}
+		rejected = true
+		return nil
+	})
+	return rejected && err == nil, err
+}
+func (s *Store) FinishOrderCancellation(ctx context.Context, id, status, reason string, now time.Time) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var item domain.OrderCancellation
+		if err := tx.Where("id = ? AND status = ?", id, domain.ActionExecuting).First(&item).Error; err != nil {
+			return err
+		}
+		r := tx.Model(&domain.OrderCancellation{}).
+			Where("id = ? AND status = ?", id, domain.ActionExecuting).
+			Updates(map[string]interface{}{"status": status, "failure_code": reason, "completed_at": now, "updated_at": now})
+		if r.Error != nil {
+			return r.Error
+		}
+		if r.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		return tx.Create(&domain.Audit{
+			KeyID: item.KeyID, ActorAdminID: item.ReviewedBy, Action: "order_cancel_complete",
+			Route: "ai/order_cancellation", Result: status, CreatedAt: now,
+		}).Error
+	})
+}
