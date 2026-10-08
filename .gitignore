@@ -22,3 +22,7 @@ internal/web/dist/
 # Agents 配置
 .agents/
 skills-lock.json
+
+# Python integration tests / bytecode
+__pycache__/
+*.pyc

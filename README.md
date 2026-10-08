@@ -4,9 +4,9 @@
 
 [![CI](https://github.com/slobys/dujiao-next/actions/workflows/ci.yml/badge.svg)](https://github.com/slobys/dujiao-next/actions/workflows/ci.yml) [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE) [![Docker Compose](https://img.shields.io/badge/Deploy-Docker%20Compose-2496ED?logo=docker&logoColor=white)](scripts/fork-deploy.sh)
 
-> **本仓库是个人维护的 Fork，并非上游官方发行版。** 当前优先完善简易部署和运维；计划中的 AI 管理、自动报表、AI 页面设计等能力**尚未集成**。安装脚本可用性已经过静态和模拟测试，但仍需在目标服务器做完整首次安装验证。
+> **本仓库是个人维护的 Fork，并非上游官方发行版。** 已提供菜单式部署工具和第一阶段 OpenClaw / n8n 集成示例。AI 操作仅涵盖安全的商品草稿和汇总查询，尚不支持自动发布页面或长期机器令牌；部署与集成已做本地自动化测试，仍需在目标服务器验证。
 
-**快速导航：** [一键部署](#-一键部署本-fork) · [管理与更新](#-日常管理) · [数据与备份](#-数据与备份) · [开发指南](#-本地开发) · [与上游的区别](#-与上游的区别)
+**快速导航：** [一键部署](#-一键部署本-fork) · [管理与更新](#-日常管理) · [数据与备份](#-数据与备份) · [AI 接入](#-ai-接入openclaw--n8n-第一阶段) · [开发指南](#-本地开发) · [与上游的区别](#-与上游的区别)
 
 ## ✨ 主要功能
 
@@ -17,6 +17,7 @@
 | 权限安全 | 管理员 RBAC、JWT、TOTP 2FA（来自上游） |
 | 数据存储 | SQLite 或 PostgreSQL；Redis 用于缓存与异步任务（来自上游） |
 | **Fork 增强** | **独立 Docker Compose 源码一键部署、数据持久化、状态/日志/重启、冷备份、源码更新** |
+| **AI 初版** | **OpenClaw 商品/库存只读查询、下架草稿创建、经营报表与 n8n 定时 Telegram 推送模板** |
 
 ## 🚀 一键部署（本 Fork）
 
@@ -78,6 +79,8 @@ sudo env DUJIAO_BIND=0.0.0.0 DUJIAO_PORT=18080 \
 | `sudo dujiao-fork update` | 自动备份 → 更新 Fork `main` → 构建新镜像 → 重启并检查 |
 | `sudo dujiao-fork help` | 查看命令与可配置参数 |
 
+运行 **`sudo dujiao-fork`**（不带参数）可进入中文交互式菜单；脚本自动化仍可以使用上表的独立命令。菜单不会增加自动卸载、公开数据或修改支付设置等高危操作。
+
 ### 更新的行为与限制
 
 - 更新使用 `git fetch` + `git merge --ff-only`，**源码存在未提交改动时直接拒绝**，不会强行覆盖。
@@ -115,6 +118,31 @@ sudo env DUJIAO_FORK_DIR=/opt/my-dujiao \
 ```
 
 后续管理命令若使用自定义目录，也需传入同样的 `DUJIAO_FORK_DIR`。不要手工将已有数据文件夹直接覆盖到新安装目录；旧站迁移应单独执行。
+
+## 🤖 AI 接入（OpenClaw / n8n 第一阶段）
+
+新增本 Fork 的 [OpenClaw 技能](integrations/openclaw/dujiao-next/SKILL.md)、[Python 管理命令](integrations/openclaw/dujiao-next/dujiao.py) 和 [n8n 每日报表示例](integrations/openclaw/n8n-daily-telegram.json)。此阶段复用商城自带的后台 API，不修改支付、退款和数据库核心逻辑。
+
+目前可实现：**读取商品/分类、查看库存预警、按时区生成每日经营报表、通过 Telegram 发送报表，以及在明确批准后创建“下架且库存为 0”的人工交付商品草稿**。高级 AI 智能调价、自动上架、独立长期机器认证、页面自主发布尚未实现。
+
+在 OpenClaw 的 NAS 工作区安装技能：
+
+```bash
+mkdir -p "$HOME/.openclaw/workspace/skills"
+cp -a integrations/openclaw/dujiao-next "$HOME/.openclaw/workspace/skills/"
+openclaw skills list
+```
+
+配置受限管理员 API 凭据后，OpenClaw 可使用：
+
+```bash
+python3 "$HOME/.openclaw/workspace/skills/dujiao-next/dujiao.py" categories
+python3 "$HOME/.openclaw/workspace/skills/dujiao-next/dujiao.py" daily-report --date yesterday --tz Asia/Shanghai
+```
+
+n8n 模板可每天北京时间 09:00 通过 SSH 在 NAS 执行日报发送；导入后仍需自行配置 SSH 凭据、商城授权及 Telegram Token，并由用户启用工作流。**短期 JWT 到期、2FA 或 CAPTCHA 会阻止无人值守登录，现阶段不能保证所有认证配置下的日报都能自动持续发送。**不得为自动化关闭安全验证。
+
+完整设置、权限安全、草稿审批和 n8n 操作步骤见 **[AI 接入说明](integrations/openclaw/README.md)**。
 
 ## 💻 本地开发
 
@@ -167,6 +195,7 @@ scripts/dujiao-next-manager.sh  上游 systemd 管理器（非 Fork 部署）
 ```bash
 bash -n scripts/fork-deploy.sh
 bash scripts/tests/fork-deploy_test.sh
+python3 -m unittest discover -s integrations/openclaw/dujiao-next/tests -v
 go test ./...
 
 # 前端请分别在对应目录运行：
@@ -180,11 +209,11 @@ cd ../admin && pnpm run test && pnpm run build
 
 ## 🧩 后续规划（尚未实现）
 
-- OpenClaw 专用管理工具：查询/创建商品、库存告警、审批后上架。
-- n8n 每日订单与销售分析，通过 Telegram/邮件发送日报。
-- Codex 协助装修页面，预览、代码审查及受控发布。
+- 为 AI 建立专用且可撤销的长期服务凭证、细粒度权限与审计。
+- n8n 连接真实经营环境后的完整链路验证、异常重试与通知监控。
+- Codex 修改商城主题并在测试环境预览、审核后发布。
 
-这些是后续二次开发方向，不应将其误认为当前版本已经具备的 AI 自动控制功能。
+这些是后续开发方向，和上面已经实现的初版工具严格区分。
 
 ## 🔀 与上游的区别
 

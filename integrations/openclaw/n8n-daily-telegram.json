@@ -1,0 +1,65 @@
+{
+  "name": "Dujiao-Next 昨日营业报表 → Telegram（NAS SSH）",
+  "nodes": [
+    {
+      "id": "dujiao-next-schedule",
+      "name": "每日 09:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        260,
+        260
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 9,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "dujiao-next-ssh",
+      "name": "SSH 调用 NAS 报表助手",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        540,
+        260
+      ],
+      "parameters": {
+        "authentication": "privateKey",
+        "resource": "command",
+        "operation": "execute",
+        "cwd": "/",
+        "command": "bash -lc 'set -a; . \"$HOME/.config/dujiao-next-ai.env\"; set +a; python3 \"$HOME/.openclaw/workspace/skills/dujiao-next/dujiao.py\" daily-telegram --date yesterday --tz Asia/Shanghai'"
+      }
+    }
+  ],
+  "connections": {
+    "每日 09:00": {
+      "main": [
+        [
+          {
+            "node": "SSH 调用 NAS 报表助手",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "timezone": "Asia/Shanghai"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

@@ -38,6 +38,18 @@ jobs:
       - name: Run installer tests
         run: sudo bash scripts/tests/dujiao-next-manager_test.sh
 
+      - name: Check fork manager scripts
+        run: |
+          bash -n scripts/fork-deploy.sh
+          bash -n scripts/tests/fork-deploy_test.sh
+          shellcheck -x -S warning scripts/fork-deploy.sh scripts/tests/fork-deploy_test.sh
+
+      - name: Test fork deployment and OpenClaw integration
+        run: |
+          sudo bash scripts/tests/fork-deploy_test.sh
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s integrations/openclaw/dujiao-next/tests -v
+          python3 -m json.tool integrations/openclaw/n8n-daily-telegram.json >/dev/null
+
       - name: Check release archive includes installer
         run: |
           python3 - <<'PY'
