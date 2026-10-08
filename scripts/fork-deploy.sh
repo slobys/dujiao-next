@@ -591,7 +591,7 @@ print_access_links() {
     if verify_https "$domain"; then
       base="https://$domain"
     else
-      info "配置了域名 $domain，但 HTTPS 尚未通过验证，不输出未经验证的 HTTPS 链接。"
+      info "配置了 HTTPS 标识 $domain，但 TLS 信任验证尚未通过，不输出未经验证的 HTTPS 链接。"
     fi
   fi
   if [[ -z "$base" ]]; then
@@ -918,6 +918,44 @@ sys.exit(0 if valid else 1)
 PY
 }
 
+# Only public routable IPv4 is supported by the current Docker HTTPS
+# mapping; private, loopback, documentation, CGNAT and multicast are refused.
+validate_public_ipv4() {
+  python3 - "$1" <<'PY'
+import ipaddress
+import sys
+try:
+    ip = ipaddress.IPv4Address(sys.argv[1])
+except ipaddress.AddressValueError:
+    raise SystemExit(1)
+# Align with the backend's MCP HTTPS IPv4 validator; Python's
+# is_global() alone can accept rare special-purpose allocations.
+blocked = [
+    "0.0.0.0/8", "100.64.0.0/10", "169.254.0.0/16",
+    "192.0.0.0/24", "192.0.2.0/24", "192.88.99.0/24",
+    "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24",
+    "224.0.0.0/4", "240.0.0.0/4",
+]
+safe = (ip.is_global and not ip.is_multicast and not ip.is_reserved
+        and all(ip not in ipaddress.IPv4Network(cidr) for cidr in blocked))
+raise SystemExit(0 if safe else 1)
+PY
+}
+
+validate_https_subject() {
+  validate_domain "$1" || validate_public_ipv4 "$1"
+}
+
+https_subject_type() {
+  if validate_public_ipv4 "$1"; then
+    printf 'ip\n'
+  elif validate_domain "$1"; then
+    printf 'domain\n'
+  else
+    return 1
+  fi
+}
+
 validate_acme_email() {
   [[ -z "$1" ]] && return 0
   python3 - "$1" <<'PY'
@@ -969,10 +1007,16 @@ PY
 }
 
 render_https_compose() {
-  cat <<'YAML'
+  local caddy_image="caddy:2-alpine"
+  # Public IP certificates need Caddy's recent ACME profile support.
+  # Keep the existing domain image choice for backward compatibility.
+  if [[ "${1:-domain}" == "ip" ]]; then
+    caddy_image="caddy:2.11.7-alpine"
+  fi
+  cat <<YAML
 services:
   caddy:
-    image: caddy:2-alpine
+    image: ${caddy_image}
     restart: unless-stopped
     depends_on:
       app:
@@ -991,19 +1035,29 @@ YAML
 
 render_caddyfile() {
   local domain=$1 email=$2
-  validate_domain "$domain" || die "域名格式无效。"
+  validate_https_subject "$domain" || die "HTTPS 标识必须是真实域名或公网 IPv4。"
   validate_acme_email "$email" || die "证书联系邮箱格式无效。"
   if [[ -n "$email" ]]; then
     printf '{\n  email %s\n}\n\n' "$email"
   fi
-  printf '%s {\n  encode zstd gzip\n  reverse_proxy app:8080\n  header X-Content-Type-Options "nosniff"\n}\n' "$domain"
+  if validate_public_ipv4 "$domain"; then
+    # Without this explicit issuer Caddy normally uses its LOCAL CA
+    # for IP hosts (browser-untrusted). LE IP certificates require
+    # ACME profile 'shortlived' with 160h lifetime.
+    printf '%s {\n  tls {\n    issuer acme https://acme-v02.api.letsencrypt.org/directory {\n      profile shortlived\n      disable_tlsalpn_challenge\n    }\n  }\n' "$domain"
+    printf '  encode zstd gzip\n  reverse_proxy app:8080\n  header X-Content-Type-Options "nosniff"\n}\n'
+  else
+    printf '%s {\n  encode zstd gzip\n  reverse_proxy app:8080\n  header X-Content-Type-Options "nosniff"\n}\n' "$domain"
+  fi
 }
 
 https_current_domain() {
-  https_enabled || die "尚未配置 HTTPS 域名。"
+  https_enabled || die "尚未配置 HTTPS。"
   local domain
   domain=$(cat "$INSTALL_DIR/.https-domain")
-  validate_domain "$domain" || die "HTTPS 域名标记无效，拒绝操作。"
+  # Legacy marker filename is retained so existing domain deployments,
+  # backups, migration and rollback remain compatible.
+  validate_https_subject "$domain" || die "HTTPS 域名/IP 标记无效，拒绝操作。"
   printf '%s\n' "$domain"
 }
 
@@ -1074,23 +1128,56 @@ rollback_https() {
 run_configure_https() {
   require_installed
   https_files_safe
-  local domain=${DUJIAO_DOMAIN:-} email=${DUJIAO_ACME_EMAIL:-}
-  if [[ -z "$domain" ]]; then
-    [[ -r /dev/tty && -w /dev/tty ]] ||
-      die "非交互执行请设置 DUJIAO_DOMAIN=shop.example.com。"
-    printf '请输入商城域名（须已设置 A 记录）：' >/dev/tty
-    IFS= read -r domain </dev/tty || die "输入中断。"
-    printf '证书联系邮箱（可选，按回车跳过）：' >/dev/tty
-    IFS= read -r email </dev/tty || die "输入中断。"
-  fi
-  domain=${domain,,}
-  validate_domain "$domain" ||
-    die "请输入有效的真实域名；不支持通配符、IP、URL、localhost 或非 ASCII 字符。"
+  local mode=${1:-domain} domain="" email=${DUJIAO_ACME_EMAIL:-}
+  case "$mode" in
+    domain)
+      [[ -z "${DUJIAO_IP:-}" ]] || die "域名模式不能同时设置 DUJIAO_IP。"
+      domain=${DUJIAO_DOMAIN:-}
+      if [[ -z "$domain" ]]; then
+        [[ -r /dev/tty && -w /dev/tty ]] ||
+          die "非交互域名模式请设置 DUJIAO_DOMAIN=shop.example.com。"
+        printf '请输入商城域名（须已设置 A 记录）：' >/dev/tty
+        IFS= read -r domain </dev/tty || die "输入中断。"
+        printf '证书联系邮箱（可选，回车跳过）：' >/dev/tty
+        IFS= read -r email </dev/tty || die "输入中断。"
+      fi
+      domain=${domain,,}
+      validate_domain "$domain" ||
+        die "请输入合法公网域名；不接受 IP、URL、通配符或保留域名。"
+      info "正在检查域名 IPv4 A 记录..."
+      check_domain_dns "$domain" ||
+        die "域名还没有 IPv4 A 记录，请先修改 DNS 再重试。"
+      ;;
+    ip)
+      [[ -z "${DUJIAO_DOMAIN:-}" ]] || die "IP 模式不能同时设置 DUJIAO_DOMAIN。"
+      domain=${DUJIAO_IP:-}
+      if [[ -z "$domain" ]]; then
+        [[ -r /dev/tty && -w /dev/tty ]] ||
+          die "非交互 IP 模式请设置 DUJIAO_IP=实际公网IPv4。"
+        printf '请输入本云服务器公网 IPv4（不支持私网、NAT 内网 IP 或 IPv6）：' >/dev/tty
+        IFS= read -r domain </dev/tty || die "输入中断。"
+        printf '证书联系邮箱（可选，回车跳过）：' >/dev/tty
+        IFS= read -r email </dev/tty || die "输入中断。"
+      fi
+      validate_public_ipv4 "$domain" ||
+        die "IP 证书只支持真实公网 IPv4；拒绝私网、回环、CGNAT、文档保留 IP 或 IPv6。"
+      info "IP 证书使用 Let's Encrypt shortlived（160 小时），由持续运行的 Caddy 自动续期。"
+      info "需公网 TCP 80（HTTP-01）及 443 能到达本机 Caddy；无须域名/DNS A 记录。"
+      local detected=""
+      if detected=$(detect_public_ipv4 2>/dev/null); then
+        if [[ "$detected" != "$domain" ]]; then
+          info "警告：当前出口公网 IPv4 为 $detected，申请目标为 $domain；如有入站 NAT/映射，请确认 80/443 能到达此机。"
+        fi
+      else
+        info "无法可靠自动识别公网 IPv4，将以 ACME 公网验证及严格 TLS 检查为准。"
+      fi
+      ;;
+    *)
+      die "HTTPS 类型只能是 domain 或 ip。"
+      ;;
+  esac
   validate_acme_email "$email" || die "ACME 联系邮箱无效。"
   has_command curl || die "证书验证需要 curl，请先安装 curl。"
-  info "正在检查域名解析..."
-  check_domain_dns "$domain" ||
-    die "域名还没有 IPv4 A 记录，请先修改 DNS 再重试。"
   if https_enabled; then
     local current
     current=$(https_current_domain)
@@ -1100,7 +1187,7 @@ run_configure_https() {
         show_installed_links
         return 0
       fi
-      info "此前配置的域名证书或容器不可用，将保留旧配置备份并重新尝试启动 Caddy。"
+      info "此前配置的 HTTPS 证书或容器不可用，将保留旧配置备份并重新尝试启动 Caddy。"
     fi
   else
     # A stopped foreign Caddy with our Compose project label must not be
@@ -1127,7 +1214,7 @@ run_configure_https() {
   mkdir -p "$INSTALL_DIR/data/caddy/"{data,config}
   chmod 0700 "$INSTALL_DIR/data/caddy" "$INSTALL_DIR/data/caddy/"{data,config}
   render_caddyfile "$domain" "$email" > "$INSTALL_DIR/data/caddy/Caddyfile"
-  render_https_compose > "$INSTALL_DIR/compose.https.yaml"
+  render_https_compose "$mode" > "$INSTALL_DIR/compose.https.yaml"
   printf '%s\n' "$domain" > "$INSTALL_DIR/.https-domain"
   chmod 0600 "$INSTALL_DIR/data/caddy/Caddyfile" "$INSTALL_DIR/.https-domain" \
     "$INSTALL_DIR/compose.https.yaml"
@@ -1142,12 +1229,15 @@ run_configure_https() {
     die "Caddy 启动失败，正在恢复旧配置。"
   info "正在等待 Let's Encrypt/公信 CA 证书签发与 HTTPS 实际验证..."
   wait_for_https "$domain" ||
-    die "HTTPS 证书仍不可用，请确认云服务商安全组及系统防火墙已开放 TCP 80/443，并检查 DNS 和 Caddy 日志。"
+    die "HTTPS 证书未通过公网可信验证，请确认云服务商安全组 TCP 80/443、服务器端口映射与 Caddy 日志；域名模式还需检查 DNS。"
 
   HTTPS_PENDING=0
   rm -rf -- "$HTTPS_BACKUP_DIR"
   HTTPS_BACKUP_DIR=""
-  info "已验证 HTTPS：https://$domain；Caddy 自动续期和 HTTP 跳转已启用。"
+  info "已验证公信 CA HTTPS：https://$domain；Caddy 自动续期和 HTTP 跳转已启用。"
+  if [[ "$mode" == "ip" ]]; then
+    info "已启用 160 小时 IP 短期证书的 Caddy 内置自动续期（Caddy 须保持运行且验证端口开放）。"
+  fi
 
   local old_bind old_port
   read -r old_bind old_port < <(network_env_current)
@@ -1162,21 +1252,89 @@ run_configure_https() {
   show_installed_links
 }
 
+run_configure_https_menu() {
+  if [[ -n "${DUJIAO_DOMAIN:-}" && -n "${DUJIAO_IP:-}" ]]; then
+    die "DUJIAO_DOMAIN 与 DUJIAO_IP 不能同时设置。"
+  fi
+  if [[ -n "${DUJIAO_DOMAIN:-}" ]]; then
+    run_configure_https domain
+    return
+  fi
+  if [[ -n "${DUJIAO_IP:-}" ]]; then
+    run_configure_https ip
+    return
+  fi
+  [[ -r /dev/tty && -w /dev/tty ]] ||
+    die "非交互执行请设置 DUJIAO_DOMAIN=域名 或 DUJIAO_IP=公网IPv4。"
+  cat >/dev/tty <<'MENU'
+请选择 HTTPS 公网可信证书类型：
+  1) 域名证书（Caddy 自动申请及续期）
+  2) 公网 IPv4 证书（Let's Encrypt 160 小时短期证书，Caddy 自动续期）
+MENU
+  local choice
+  printf '请选择 [1]：' >/dev/tty
+  IFS= read -r choice </dev/tty || die "未能读取 HTTPS 类型。"
+  case "${choice:-1}" in
+    1) run_configure_https domain ;;
+    2) run_configure_https ip ;;
+    *) die "只能选择 1 或 2；未变更现有 HTTPS 配置。" ;;
+  esac
+}
+
+# Inspect the actual certificate served locally, not the files in Caddy's
+# ACME cache. curl verify_https above checks system trust and the DNS/IP SAN.
+https_show_certificate_expiry() {
+  local subject=$1 certificate="" expires=""
+  has_command openssl || {
+    info "未找到 OpenSSL，无法显示证书到期时间。"
+    return 0
+  }
+  local -a sni=()
+  # Domain certificates need proper SNI. IP literals should omit DNS SNI.
+  if ! validate_public_ipv4 "$subject"; then
+    sni=(-servername "$subject")
+  fi
+  certificate=$(openssl s_client -connect 127.0.0.1:443 "${sni[@]}" -showcerts </dev/null 2>/dev/null) || {
+    info "无法提取当前 TLS 证书到期时间。"
+    return 0
+  }
+  expires=$(openssl x509 -noout -enddate <<< "$certificate" 2>/dev/null) || {
+    info "无法解析当前 TLS 证书到期时间。"
+    return 0
+  }
+  printf '证书到期时间（UTC）：%s\n' "${expires#notAfter=}"
+  if validate_public_ipv4 "$subject"; then
+    printf "IP 证书：Let's Encrypt shortlived（160 小时）；Caddy 持续自动续期。\n"
+    if ! openssl x509 -checkend 86400 -noout <<< "$certificate" >/dev/null 2>&1; then
+      info "警告：IP 证书将在 24 小时内到期，请立即检查 Caddy 自动续期日志以及公网 TCP 80/443。"
+      return 1
+    fi
+  fi
+}
+
 run_https_status() {
   require_installed
   if ! https_enabled; then
-    info "尚未配置本脚本管理的 HTTPS；运行 sudo dujiao-fork configure-domain。"
+    info "尚未配置 HTTPS；运行 sudo dujiao-fork 选择菜单 9（域名或公网 IP）。"
     return 0
   fi
-  local domain
+  local domain mode
   domain=$(https_current_domain)
-  printf 'HTTPS 域名：https://%s\n' "$domain"
+  mode=$(https_subject_type "$domain")
+  if [[ "$mode" == "ip" ]]; then
+    printf 'HTTPS 公网 IPv4：https://%s\n' "$domain"
+  else
+    printf 'HTTPS 域名：https://%s\n' "$domain"
+  fi
   compose ps caddy
   if verify_https "$domain"; then
-    info "证书链、域名和商城 /health 均验证通过。Caddy 自动续期已启用。"
+    info "公信 CA 证书链、DNS/IP 标识和商城 /health 已通过严格 TLS 验证。"
+    https_show_certificate_expiry "$domain" ||
+      die "IP 证书续期健康检查失败，请查看 sudo dujiao-fork logs。"
+    info "自动续期由 Caddy 管理，证书与 ACME 账户在持久化存储中。"
     show_installed_links
   else
-    die "HTTPS 证书或访问不可用，请检查 DNS、80/443、防火墙及 Caddy 日志。"
+    die "HTTPS 证书或商城健康检查失败，请检查 DNS/IP、TCP 80/443、证书自动续期和 Caddy 日志。"
   fi
 }
 
@@ -1190,9 +1348,10 @@ menu_command_for() {
     6) printf 'restart' ;;
     7) printf 'help' ;;
     8) printf 'configure-network' ;;
-    9) printf 'configure-domain' ;;
+    9) printf 'configure-https' ;;
     10) printf 'https-status' ;;
     11) printf 'access' ;;
+    12) printf 'configure-ip' ;;
     0|q|Q) printf 'exit' ;;
     *) return 1 ;;
   esac
@@ -1213,16 +1372,17 @@ run_menu() {
   6) 重启服务
   7) 命令帮助
   8) 修改监听 IP / 端口（自动重建应用，失败恢复）
-  9) 一键绑定域名并申请 HTTPS 证书（Caddy 自动续期）
+  9) 申请 HTTPS 证书：选择域名 / 公网 IPv4（自动续期）
  10) 查看 HTTPS 证书与访问状态
  11) 显示可复制的商城和后台访问链接
+ 12) 直接为公网 IPv4 申请短期 HTTPS 证书
   0) 退出
 ===========================================
 MENU
     printf '请输入编号: ' >/dev/tty
     IFS= read -r choice </dev/tty || return 0
     if ! action=$(menu_command_for "$choice"); then
-      info "无效的菜单编号：请使用 0-11。"
+      info "无效的菜单编号：请使用 0-12。"
       continue
     fi
     [[ "$action" != "exit" ]] || return 0
@@ -1239,7 +1399,9 @@ execute_command() {
     restart) require_tools; require_installed; compose restart; wait_for_health || die "重启后健康检查未通过。" ;;
     backup) require_tools; run_backup ;;
     configure-network) require_tools; run_configure_network ;;
-    configure-domain) require_tools; run_configure_https ;;
+    configure-domain) require_tools; run_configure_https domain ;;
+    configure-ip) require_tools; run_configure_https ip ;;
+    configure-https) require_tools; run_configure_https_menu ;;
     https-status) require_tools; run_https_status ;;
     access) require_tools; show_installed_links ;;
     help) usage ;;
@@ -1250,17 +1412,20 @@ execute_command() {
 usage() {
   cat <<'HELP'
 Dujiao-Next fork Docker 管理器
-用法：sudo bash fork-deploy.sh [menu|install|update|status|logs|restart|backup|configure-network|configure-domain|https-status|access|help]
+用法：sudo bash fork-deploy.sh [menu|install|update|status|logs|restart|backup|configure-network|configure-https|configure-domain|configure-ip|https-status|access|help]
       成功安装后可运行：sudo dujiao-fork （无参数打开交互菜单）
       也支持：sudo dujiao-fork <命令> （供自动化脚本调用）
 修改 IP/端口：sudo dujiao-fork configure-network （交互式）
 自动化配置：sudo env DUJIAO_BIND=127.0.0.1 DUJIAO_PORT=18080 dujiao-fork configure-network
 公网监听需在终端输入 PUBLIC 或额外指定 DUJIAO_CONFIRM_PUBLIC=YES（不建议裸露 HTTP）。
-域名 HTTPS：sudo dujiao-fork configure-domain（交互式）
-无人值守：sudo env DUJIAO_DOMAIN=shop.example.com DUJIAO_ACME_EMAIL=admin@example.com dujiao-fork configure-domain
+HTTPS 二选一：sudo dujiao-fork （菜单 9 选择域名/IP）
+域名 HTTPS：sudo dujiao-fork configure-domain
+公网 IPv4 HTTPS：sudo dujiao-fork configure-ip（短证书自动续期）
+无人值守域名：sudo env DUJIAO_DOMAIN=shop.example.com DUJIAO_ACME_EMAIL=admin@example.com dujiao-fork configure-domain
+无人值守 IP：sudo env DUJIAO_IP=实际公网IPv4 dujiao-fork configure-ip
 证书校验：sudo dujiao-fork https-status（Caddy 自动续期，不需要手动续签）
-访问链接：sudo dujiao-fork access（优先验证 HTTPS 域名，否则检测真实公网 IPv4）
-请先设置域名 DNS A 记录，并确认公网 TCP 80/443 可访问。
+访问链接：sudo dujiao-fork access（优先验证已配置的域名/IP HTTPS，否则检测公网 IPv4）
+域名模式需预先设置 DNS A 记录；公网 IPv4 模式不需域名。两者均需 TCP 80/443 可访问。
 
 首次安装可指定：
   DUJIAO_BIND=0.0.0.0    (可选：明确使用公网监听，跳过首次安装选择)
@@ -1278,7 +1443,7 @@ main() {
   local command="${1:-menu}"
   case "$command" in
     help|-h|--help) usage; return ;;
-    menu|install|update|status|logs|restart|backup|configure-network|configure-domain|https-status|access) ;;
+    menu|install|update|status|logs|restart|backup|configure-network|configure-https|configure-domain|configure-ip|https-status|access) ;;
     *) usage; die "未知命令：$command" ;;
   esac
   require_root

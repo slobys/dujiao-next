@@ -284,8 +284,8 @@ else
 fi
 check "existing flock made no APT calls" test ! -e "$TEST_TMP/flock-existing-apt"
 
-menu_expected=(install status logs backup update restart help configure-network configure-domain https-status access exit)
-menu_codes=(1 2 3 4 5 6 7 8 9 10 11 0)
+menu_expected=(install status logs backup update restart help configure-network configure-https https-status access configure-ip exit)
+menu_codes=(1 2 3 4 5 6 7 8 9 10 11 12 0)
 for i in "${!menu_codes[@]}"; do
   actual=$(menu_command_for "${menu_codes[$i]}")
   if [[ "$actual" == "${menu_expected[$i]}" ]]; then
@@ -294,7 +294,7 @@ for i in "${!menu_codes[@]}"; do
     fail "menu choice ${menu_codes[$i]} resolves to ${menu_expected[$i]}"
   fi
 done
-if menu_command_for 12 >/dev/null; then
+if menu_command_for 13 >/dev/null; then
   fail "menu rejects unknown choices"
 else
   pass "menu rejects unknown choices"
@@ -1109,6 +1109,127 @@ if grep -Eqi 'Vultr|AWS|腾讯云|阿里云' "$REPO_DIR/scripts/fork-deploy.sh";
 else
   pass "manager runtime messages are cloud-provider neutral"
 fi
+
+
+# IP HTTPS uses public ACME shortlived (160h) with persisted Caddy auto-renewal.
+check "public IPv4 qualifies for IP certificate" validate_public_ipv4 8.8.8.8
+reject "private LAN IP never receives a public certificate" validate_public_ipv4 192.168.2.238
+reject "loopback cannot receive a public certificate" validate_public_ipv4 127.0.0.1
+reject "CGNAT IP is rejected" validate_public_ipv4 100.64.10.1
+reject "RFC 5737 documentation IP is rejected" validate_public_ipv4 203.0.113.22
+reject "multicast is rejected" validate_public_ipv4 224.0.0.1
+reject "IPv6 is not silently accepted in IPv4-only deployment" validate_public_ipv4 2001:db8::1
+check "domain mode still accepted" validate_https_subject shop.example.com
+check "IP mode accepted" validate_https_subject 8.8.8.8
+if [[ "$(https_subject_type 8.8.8.8)" == ip && "$(https_subject_type shop.example.com)" == domain ]]; then
+  pass "detects correct HTTPS certificate mode"
+else
+  fail "detects correct HTTPS certificate mode"
+fi
+render_caddyfile 8.8.8.8 alerts@example.com > "$TEST_DIR/ip-Caddyfile"
+check "Caddy uses exact IP identifier" grep -Fxq '8.8.8.8 {' "$TEST_DIR/ip-Caddyfile"
+check "Caddy explicitly requests LE public CA" grep -Fxq '    issuer acme https://acme-v02.api.letsencrypt.org/directory {' "$TEST_DIR/ip-Caddyfile"
+check "Caddy requests mandatory shortlived profile" grep -Fxq '      profile shortlived' "$TEST_DIR/ip-Caddyfile"
+check "Caddy uses reliable HTTP-01 for IP" grep -Fxq '      disable_tlsalpn_challenge' "$TEST_DIR/ip-Caddyfile"
+reject "Caddy does not generate self-signed local certificates" grep -Fq 'tls internal' "$TEST_DIR/ip-Caddyfile"
+render_https_compose ip > "$TEST_DIR/ip-compose.yaml"
+check "IP mode pins Caddy version verified for ACME profile" grep -Fq 'image: caddy:2.11.7-alpine' "$TEST_DIR/ip-compose.yaml"
+check "Caddy will start again after reboot" grep -Fq 'restart: unless-stopped' "$TEST_DIR/ip-compose.yaml"
+check "ACME renewal has durable certificate storage" grep -Fq './data/caddy/data:/data' "$TEST_DIR/ip-compose.yaml"
+check "ACME renewal has durable configuration storage" grep -Fq './data/caddy/config:/config' "$TEST_DIR/ip-compose.yaml"
+: > "$TEST_DIR/ip-curl"
+if (source "$REPO_DIR/scripts/fork-deploy.sh"; curl(){ printf '%s\n' "$*" >> "$TEST_DIR/ip-curl"; printf '200'; }; verify_https 8.8.8.8); then
+  pass "valid public IP certificate passes strict TLS verifier"
+else
+  fail "valid public IP certificate passes strict TLS verifier"
+fi
+check "TLS verifier connects local proxy but validates public IP" grep -Fq -- '--resolve 8.8.8.8:443:127.0.0.1 https://8.8.8.8/health' "$TEST_DIR/ip-curl"
+reject "TLS verifier never uses insecure skip verification" grep -Eq -- '--insecure|(^|[[:space:]])-k([[:space:]]|$)' "$TEST_DIR/ip-curl"
+
+# Fresh IP installation does not consult DNS or touch existing business data.
+mkdir -p "$TEST_DIR/fresh-ip/src/.git" "$TEST_DIR/fresh-ip/data/caddy/data"
+cp "$INSTALL_DIR/compose.yaml" "$TEST_DIR/fresh-ip/compose.yaml"
+cp "$network_file" "$TEST_DIR/fresh-ip/.env"
+: > "$TEST_DIR/fresh-ip/$MANAGED_MARKER"
+: > "$TEST_DIR/ip-actions"
+if (
+  INSTALL_DIR="$TEST_DIR/fresh-ip"
+  DUJIAO_IP=8.8.8.8 DUJIAO_DOMAIN='' DUJIAO_ACME_EMAIL=''
+  compose(){ printf '%s\n' "$*" >> "$TEST_DIR/ip-actions"; }
+  detect_public_ipv4(){ printf '8.8.8.8\n'; }
+  check_domain_dns(){ printf 'UNEXPECTED-DNS\n' >> "$TEST_DIR/ip-actions"; return 1; }
+  check_https_port_conflicts(){ :; }
+  wait_for_https(){ return 0; }
+  verify_https(){ return 0; }
+  HTTPS_PENDING=0 HTTPS_CADDY_STARTED=0 HTTPS_HAD_CONFIG=0
+  run_configure_https ip
+); then
+  pass "IP certificate can be installed with no domain"
+else
+  fail "IP certificate can be installed with no domain"
+fi
+check "IP installation stores subject in compatible marker" grep -Fxq '8.8.8.8' "$TEST_DIR/fresh-ip/.https-domain"
+check "IP installation uses correct Caddy ACME profile" grep -Fxq '      profile shortlived' "$TEST_DIR/fresh-ip/data/caddy/Caddyfile"
+check "IP installation pins compatible Caddy" grep -Fq 'image: caddy:2.11.7-alpine' "$TEST_DIR/fresh-ip/compose.https.yaml"
+check "IP installation validates Compose before replacing proxy" grep -Fxq 'config --quiet' "$TEST_DIR/ip-actions"
+check "IP installation validates Caddyfile before replacing proxy" grep -Fxq 'run --rm --no-deps --entrypoint caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile' "$TEST_DIR/ip-actions"
+reject "IP installation does not require domain DNS" grep -q 'UNEXPECTED-DNS' "$TEST_DIR/ip-actions"
+
+# A failed second IP certificate must restore the last valid proxy state.
+: > "$TEST_DIR/ip-fail-actions"
+if (
+  INSTALL_DIR="$TEST_DIR/fresh-ip"
+  DUJIAO_IP=1.1.1.1 DUJIAO_DOMAIN='' DUJIAO_ACME_EMAIL=''
+  compose(){ printf '%s\n' "$*" >> "$TEST_DIR/ip-fail-actions"; }
+  detect_public_ipv4(){ printf '1.1.1.1\n'; }
+  wait_for_https(){ return 1; }
+  HTTPS_PENDING=0 HTTPS_BACKUP_DIR='' HTTPS_HAD_CONFIG=0 HTTPS_CADDY_STARTED=0
+  trap cleanup EXIT
+  run_configure_https ip
+) >/dev/null 2>&1; then
+  fail "failed IP certificate must never be reported as issued"
+else
+  pass "failed IP certificate rolls back"
+fi
+check "IP failure restores last valid IP marker" grep -Fxq '8.8.8.8' "$TEST_DIR/fresh-ip/.https-domain"
+check "IP failure restores last valid Caddy configuration" grep -Fxq '8.8.8.8 {' "$TEST_DIR/fresh-ip/data/caddy/Caddyfile"
+check "IP failure re-creates only Caddy twice" test "$(grep -Fc 'up -d --no-build --no-deps --force-recreate caddy' "$TEST_DIR/ip-fail-actions")" = 2
+check "IP failure preserves ACME private data" test -d "$TEST_DIR/fresh-ip/data/caddy/data"
+
+# Mode switch uses existing domain path and keeps prior data directories.
+if (
+  INSTALL_DIR="$TEST_DIR/fresh-ip"
+  DUJIAO_IP='' DUJIAO_DOMAIN=shop.example.com DUJIAO_ACME_EMAIL=''
+  compose(){ :; }
+  check_domain_dns(){ return 0; }
+  wait_for_https(){ return 0; }
+  verify_https(){ return 0; }
+  HTTPS_PENDING=0 HTTPS_CADDY_STARTED=0 HTTPS_HAD_CONFIG=0
+  run_configure_https domain
+); then
+  pass "IP to domain switch works without reinstallation"
+else
+  fail "IP to domain switch works without reinstallation"
+fi
+check "mode switch retains old domain marker compatibility" grep -Fxq 'shop.example.com' "$TEST_DIR/fresh-ip/.https-domain"
+reject "domain mode does not inadvertently force IP shortlived profile" grep -Fq 'profile shortlived' "$TEST_DIR/fresh-ip/data/caddy/Caddyfile"
+
+# A short-lived certificate within 24h of expiry must raise an alert.
+if (
+  openssl(){
+    if [[ "$1" == s_client ]]; then printf 'mock PEM'; return 0; fi
+    if [[ "$1" == x509 && "$2" == -noout ]]; then printf 'notAfter=Oct 10 2026 GMT\n'; return 0; fi
+    return 1
+  }
+  has_command(){ [[ "$1" == openssl ]]; }
+  https_show_certificate_expiry 8.8.8.8
+) > "$TEST_DIR/ip-expiry-warning" 2>&1; then
+  fail "IP certificate expiry warning should signal failure"
+else
+  pass "IP certificate expiry warning is actionable"
+fi
+check "near-expiry warning includes time horizon" grep -Fq '24 小时内到期' "$TEST_DIR/ip-expiry-warning"
+
 
 printf '%d passed, %d failed\n' "$passed" "$failed"
 ((failed == 0))

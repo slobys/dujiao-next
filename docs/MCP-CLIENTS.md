@@ -8,18 +8,19 @@
 
 升级到本 Fork 的 AI 总控 5.0 后，进入 **系统设置 → AI 接入管理**：
 
-1. **远程 MCP：开启**，填写你自己的可信 HTTPS 根域名，例如 `https://shop.example.com`。
+1. **远程 MCP：开启**，填写可信 HTTPS 域名 `https://shop.example.com`；或者在取得浏览器认可的 IP 证书后填写 `https://你的公网IPv4`。
 2. **AI 管家总开关：开启**。升级后默认关闭；只打开远程 MCP 并不能让 AI 访问。
 3. 如果要让 AI 创建文章、公告、Banner 草稿，可再开启**网站内容编辑**。
 4. 首次 OAuth 授权只勾选查询权限（例如 `catalog:read`、`inventory:read`、`report:read`）；跑通后再按需授予创建草稿、申请操作等权限。
 
-所有客户端连接地址都是：
+所有客户端连接地址格式相同，**域名 / 公网 IPv4 二选一**：
 
 ```text
 https://shop.example.com/mcp
+https://你的公网IPv4/mcp
 ```
 
-这里 `shop.example.com` **必须替换成你的商城 HTTPS 域名**，不需要在 NAS 或电脑上额外安装商城的 Python MCP 服务。浏览器直接打开 `/mcp` 可能返回 HTTP 405，并不代表服务损坏。
+第一种需要可信域名证书；第二种需要 Let's Encrypt 签发、包含对应 IP SAN 的公信短期证书（**160 小时**）及 Caddy 自动续期。**证书实际签发且严格 TLS 验证成功后**才能使用公网 IP MCP。更换服务器 IP 后须重签证书、更新客户端地址；不要使用 `--insecure` 绕过证书校验。不需要在 NAS 或电脑上额外安装商城的 Python MCP 服务。浏览器直接打开 `/mcp` 可能返回 HTTP 405，并不代表服务损坏。
 
 ## 第二步：按客户端选择一种方式
 

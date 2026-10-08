@@ -33,8 +33,8 @@ const translations = {
   'zh-CN': {
     title: 'AI 接入管理', subtitle: '统一管理 OpenClaw、Codex、Claude Code 的独立访问凭证',
     remoteTitle: '远程 MCP · 一键连接', remoteInfo: '通过商城 HTTPS 直接连接 AI，无需 NAS Python 或 SSH。浏览器登录后选择只读、建草稿及上架申请权限；写入权限默认关闭。',
-    originLabel: '商城 HTTPS 根域名', remoteEnabled: '开启远程 MCP', remoteSave: '保存远程设置', remoteOff: '远程连接已关闭（默认安全状态）', remoteOn: '远程 MCP 已开启',
-    remoteInvalid: '开启前必须设置真实的 HTTPS 域名，例如 https://shop.example.com', remoteSaved: '远程 MCP 设置已保存',
+    originLabel: '商城 HTTPS 域名或公网 IPv4', remoteEnabled: '开启远程 MCP', remoteSave: '保存远程设置', remoteOff: '远程连接已关闭（默认安全状态）', remoteOn: '远程 MCP 已开启',
+    remoteInvalid: '请输入可信 HTTPS 域名或已签发公信证书的公网 IPv4，例如 https://shop.example.com 或 https://8.8.8.8', remoteSaved: '远程 MCP 设置已保存',
     masterTitle: 'AI 管家总开关', masterInfo: '一键停止全部 AI 接口（包括旧版 AI Key）和 MCP 授权。商城前台、人工后台和支付回调不受影响。升级后默认关闭。',
     masterStart: '开启 AI 管家', masterStop: '立即暂停所有 AI', masterOff: 'AI 已暂停', masterOn: 'AI 已启动', masterConfirm: '确定允许已授权的 AI Agent 连接和使用其已有业务权限？涉及敏感操作依然需要逐项审批。', masterSaved: 'AI 总开关已更新',
     websiteTitle: '网站内容编辑', websiteStart: '允许 AI 创建网站内容草稿', websiteStop: '停止 AI 创建网站内容草稿', websiteInfo: '独立授权 AI 创建未发布的文章、公告和首页 Banner 草稿，不会自动上架发布；需要远程 MCP 与总开关均开启。', websiteConfirm: '开启网站内容编辑后，拥有 site:content:write 权限的 AI 将能够创建未发布的文章和 Banner 草稿。确认开启？',
@@ -60,8 +60,8 @@ const translations = {
   'zh-TW': {
     title: 'AI 接入管理', subtitle: '統一管理 OpenClaw、Codex、Claude Code 的獨立存取憑證',
     remoteTitle: '遠端 MCP · 快速連接', remoteInfo: '使用商城 HTTPS 直接連接，無需 NAS Python 或 SSH。可分配唯讀、草稿建立與上架申請權限；寫入權限預設關閉。',
-    originLabel: '商城 HTTPS 網址', remoteEnabled: '啟用遠端 MCP', remoteSave: '儲存遠端設定', remoteOff: '遠端連接已關閉', remoteOn: '遠端 MCP 已啟用',
-    remoteInvalid: '啟用前需要真實的 HTTPS 域名', remoteSaved: '遠端設定已儲存',
+    originLabel: '商城 HTTPS 域名或公網 IPv4', remoteEnabled: '啟用遠端 MCP', remoteSave: '儲存遠端設定', remoteOff: '遠端連接已關閉', remoteOn: '遠端 MCP 已啟用',
+    remoteInvalid: '啟用前須填可信 HTTPS 域名或已取得公信證書的公網 IPv4', remoteSaved: '遠端設定已儲存',
     masterTitle: 'AI 管家總開關', masterInfo: '立即暫停所有 AI 入口、舊版 Key 與 MCP，商城顧客、人工管理與支付回呼不受影響，升級預設關閉。', masterStart: '啟用 AI 管家', masterStop: '立即暫停 AI', masterOff: 'AI 已暫停', masterOn: 'AI 已啟用', masterConfirm: '確定開啟已授權的 AI 連接？高風險操作仍需人工批准。', masterSaved: '已更新總開關',
     websiteTitle: '網站內容編輯', websiteStart: '允許 AI 建立網站草稿', websiteStop: '暫停 AI 建立網站草稿', websiteInfo: '只建立未發布文章、公告與停用的首頁 Banner 草稿，不自動發布。', websiteConfirm: '允許擁有 site:content:write 的 AI 建立未發布草稿？', pausedNotice: '關閉後不允許新 AI 請求，執行中的操作可能完成，已有變更不會自動回復。',
     commandsTitle: '複製工具的連接指令', commandHelp: '工具會開啟瀏覽器，請在商城後台確認授權；無需在聊天中傳送管理員密碼。',
@@ -85,8 +85,8 @@ const translations = {
   'en-US': {
     title: 'AI Access Management', subtitle: 'Manage separate credentials for OpenClaw, Codex and Claude Code',
     remoteTitle: 'Remote MCP · Quick Connect', remoteInfo: 'Connect over HTTPS without Python or SSH. Approve read, unpublished-draft creation or publication-request scopes explicitly; write scopes default off.',
-    originLabel: 'Store HTTPS origin', remoteEnabled: 'Enable remote MCP', remoteSave: 'Save remote settings', remoteOff: 'Remote access is disabled by default', remoteOn: 'Remote MCP enabled',
-    remoteInvalid: 'A valid public HTTPS domain is required', remoteSaved: 'Remote settings saved',
+    originLabel: 'Store HTTPS domain or public IPv4', remoteEnabled: 'Enable remote MCP', remoteSave: 'Save remote settings', remoteOff: 'Remote access is disabled by default', remoteOn: 'Remote MCP enabled',
+    remoteInvalid: 'Enter an HTTPS domain or publicly trusted IPv4 HTTPS origin', remoteSaved: 'Remote settings saved',
     masterTitle: 'AI Manager Master Switch', masterInfo: 'Immediately stop all AI APIs (including legacy keys), MCP and OAuth. Human admin, storefront and payment callbacks stay online. Default OFF after upgrade.', masterStart: 'Enable AI Manager', masterStop: 'Pause ALL AI Now', masterOff: 'AI is paused', masterOn: 'AI is enabled', masterConfirm: 'Allow previously authorized AI agents to use their existing permissions? Sensitive actions still require explicit approval.', masterSaved: 'AI master switch updated',
     websiteTitle: 'Website Content Editing', websiteStart: 'Allow AI to create website drafts', websiteStop: 'Pause AI website editing', websiteInfo: 'AI can create unpublished blog/notice drafts and disabled banners, never publish automatically.', websiteConfirm: 'Allow AI agents granted site:content:write to create unpublished drafts?', pausedNotice: 'Pausing rejects new AI requests, but already-running operations may finish. Existing changes are not rolled back.',
     commandsTitle: 'Copy a connection command', commandHelp: 'The client opens a browser for admin login and explicit scope approval; write scopes start unchecked. Never paste credentials into AI chat.',

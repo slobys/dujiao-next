@@ -40,6 +40,9 @@ func TestRemoteDisabledByDefaultAndStrictOrigin(t *testing.T) {
 	}
 	invalid := []string{
 		"http://shop.example.com", "https://127.0.0.1", "https://localhost",
+		"https://192.168.2.238", "https://10.2.1.1", "https://100.64.1.1",
+		"https://203.0.113.4", "https://198.51.100.42", "https://224.0.0.1",
+		"https://[2001:db8::1]", "https://0.0.0.0", "https://8.8.8.8/path",
 		"https://shop.example.com/path", "https://user:secret@shop.example.com",
 		"https://shop.example.com?mcp=1", "https://shop.example.com/#fragment",
 		"https://shop.example.com.evil\n", "https://.example.com", "https://-bad.example.com",
@@ -445,5 +448,50 @@ func TestAIMasterSwitchFailsClosedWhenAuditUnavailable(t *testing.T) {
 	}
 	if _, err = remote.MasterActive(ctx); !errors.Is(err, app.ErrRemoteDisabled) {
 		t.Fatal("control update wasn't rolled back")
+	}
+}
+
+func TestPublicIPv4HTTPSOriginSupportsMCPWithTrustedIPCertificate(t *testing.T) {
+	ctx := context.Background()
+	domain, err := app.HTTPSOrigin("https://8.8.8.8:443")
+	if err != nil || domain != "https://8.8.8.8" {
+		t.Fatalf("public HTTPS IPv4 normalization: %q %v", domain, err)
+	}
+	for _, invalid := range []string{
+		"https://192.168.2.238", "https://127.0.0.1", "https://100.64.0.1",
+		"https://203.0.113.8", "https://198.51.100.7", "https://[2001:db8::1]",
+		"http://8.8.8.8", "https://8.8.8.8/path", "https://8.8.8.8@evil.example",
+	} {
+		if _, err = app.HTTPSOrigin(invalid); err == nil {
+			t.Fatalf("rejected origin was allowed: %s", invalid)
+		}
+	}
+	_, _, remote := remoteFixture(t)
+	cfg, err := remote.SetConfig(ctx, true, domain)
+	if err != nil || cfg.PublicOrigin != domain {
+		t.Fatalf("cannot enable trusted IP HTTPS MCP: %+v %v", cfg, err)
+	}
+	if _, err = remote.Active(ctx); !errors.Is(err, app.ErrRemoteDisabled) {
+		t.Fatal("turning on IP mode bypassed AI master switch")
+	}
+	if _, err = remote.SetControl(ctx, true, false, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = remote.Active(ctx); err != nil {
+		t.Fatalf("public IP MCP not available: %v", err)
+	}
+	client, err := remote.RegisterClient(ctx, "Codex IP HTTPS", []string{"http://127.0.0.1:5000/callback"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, err := remote.NewAuthorization(ctx, client.ClientID, "http://127.0.0.1:5000/callback", strings.Repeat("A", 43), "test-ip", "catalog:read", domain+"/mcp")
+	if err != nil || pending == nil {
+		t.Fatalf("OAuth IP resource rejected: %+v %v", pending, err)
+	}
+	if _, err = remote.SetControl(ctx, false, false, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = remote.Active(ctx); !errors.Is(err, app.ErrRemoteDisabled) {
+		t.Fatal("IP HTTPS remote MCP not paused by master")
 	}
 }

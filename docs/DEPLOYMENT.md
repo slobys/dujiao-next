@@ -79,34 +79,45 @@ sudo env DUJIAO_PUBLIC_IP=你的真实公网IPv4 dujiao-fork access
 
 已安装的商城无需重新部署，就能再次打印完整访问链接：`sudo dujiao-fork access`，或进入管理菜单选择 **11）显示访问链接**。**不会再次显示初始化密码。**
 
-### 3. 一键配置域名 + HTTPS（Caddy 自动申请和续期）
+### 3. 一键申请 HTTPS：域名或公网 IPv4（Caddy 自动续期）
 
-先在域名 DNS 中添加 **A 记录**，例如将 `shop.example.com` 指向云服务器的 **公网 IPv4**，在云服务商安全组和系统防火墙开放 **TCP 80/443**。检查错误的 AAAA/IPv6 记录。使用 Cloudflare 时，首次申请证书建议先用**仅 DNS（灰云）**；启用代理后选 **Full (strict)**，不要使用 Flexible。
+两种 HTTPS 模式均需确保云服务商安全组和系统防火墙开放 **TCP 80/443**；Caddy 容器会负责签发与自动续期。域名模式需要 DNS A 记录指向服务器公网 IPv4；IP 模式无需域名，但必须拥有真实公网可达 IPv4。
 
 已安装本 Fork 的服务器执行：
 
 ```bash
 sudo dujiao-fork
-# 选择 9) 一键绑定域名并申请 HTTPS 证书，按提示输入 shop.example.com
+# 选择菜单 9 → 1) 域名证书  或  2) 公网 IPv4 证书
 ```
 
-也支持自动化命令：
+**方式 A：域名 HTTPS（优先推荐）**。先把 DNS A 记录配置到公网 IP。Cloudflare 初次验证遇到问题可用灰云 DNS，启用代理时选择 **Full (strict)** 而非 Flexible。
+
+非交互命令：
 
 ```bash
 sudo env DUJIAO_DOMAIN=shop.example.com DUJIAO_ACME_EMAIL=admin@example.com \
   dujiao-fork configure-domain
 ```
 
-安装器会验证域名格式和 DNS，检测 80/443 是否被已有容器或服务占用，然后新增独立 **Caddy Docker 服务**，先校验配置再启动。Caddy 自动申请公信 CA 证书并负责自动续期与 HTTP → HTTPS 跳转。**只有通过直连 Caddy 的可信 HTTPS 证书链、域名和商城 `/health` 检查，才会报告成功。**证书和 ACME 账户数据会在 `data/caddy/data/` 持久化，且包含在备份中。
-
-HTTPS 成功后，若原商城的 `18080` 仍监听公网，安装器会尝试将它改为 `127.0.0.1`，仅重建应用容器、不重编译、不修改 Redis 或数据库；Caddy 在 Docker 内网通过 `app:8080` 访问商城。若修改端口失败会明确警告。证书签发或域名更换失败，会尽力恢复先前的 HTTPS 配置。
+**方式 B：公网 IPv4 HTTPS（无需域名）**。仅支持**真实公网可达的 IPv4**，不支持私网、CGNAT、保留地址或 IPv6；需要公网 TCP 80（HTTP-01）和 TCP 443 直达本机：
 
 ```bash
-sudo dujiao-fork https-status    # 校验证书、域名与商城可访问性
+sudo env DUJIAO_IP=你的实际公网IPv4 dujiao-fork configure-ip
+# 或菜单 12 直接申请公网 IP 证书
+```
+
+IP 模式显式使用 Let's Encrypt **`shortlived`** 证书（有效期 **160 小时**，约 6.7 天），并固定支持该 ACME Profile 的 **Caddy 2.11.7**；不会使用 Caddy 默认的本地自签 IP 证书。**两种模式都是 Caddy 内置自动续期，不需要 Cron**。Caddy 设置 `restart: unless-stopped`，证书及 ACME 账户持久化在 `data/caddy/data/`，配置保存在 `data/caddy/config/`。自动续期仍依赖公网 IPv4 不变、Caddy 持续运行、TCP 80/443 可达、CA 和网络正常；更换公网 IP 后必须重新申请并更新 MCP 客户端的地址。
+
+安装器会检查证书类型、端口、Compose/Caddy 配置，再启动独立的 **Caddy** 容器。**申请结果必须同时通过公信证书链、目标域名/IP SAN 和商城 `/health` 严格校验，才会报告成功。**不会把本地自签证书当成可信证书。证书和 ACME 账户保存在 `data/caddy/data/`；重启及冷备份后仍可继续管理自动续期。
+
+HTTPS 成功后，若原商城的 `18080` 仍监听公网，安装器会尝试将它改为 `127.0.0.1`，仅重建应用容器、不重编译、不修改 Redis 或数据库；Caddy 在 Docker 内网通过 `app:8080` 访问商城。若修改端口失败会明确警告。证书签发或域名/IP 切换失败，会尽力恢复先前的 HTTPS 配置。
+
+```bash
+sudo dujiao-fork https-status    # 校验证书链、域名/IP、到期时间与商城可访问性
 sudo dujiao-fork logs            # Caddy + 商城 + Redis 日志
 ```
 
-如果 80/443 已被 Nginx、Apache、NPM 或其他 Caddy 占用，安装器不会关闭或接管它们；请直接在现有反向代理中配置 HTTPS。**首次 HTTPS 申请必须确保公网能够验证域名。**安装器不会自动修改云服务商安全组或 Cloudflare DNS。反向代理需要按照实际网络设置 `server.trusted_proxies`；在另一个 Docker 容器中，`127.0.0.1` 不是宿主机。
+如果 80/443 已被 Nginx、Apache、NPM 或其他 Caddy 占用，安装器不会关闭或接管它们；请直接在现有反向代理中配置 HTTPS。**首次 HTTPS 申请与自动续期都必须能够通过公网 ACME 验证。** IP 模式仅由本安装器内置 Caddy 管理，无法保证对已有 NPM/Nginx 自动同步证书。安装器不会自动修改云服务商安全组或 Cloudflare DNS。反向代理需要按照实际网络设置 `server.trusted_proxies`；在另一个 Docker 容器中，`127.0.0.1` 不是宿主机。
 仅在确实需要从其它容器/机器访问宿主机端口，并已做好防火墙限制时，才在**首次安装时**指定监听地址和端口；**已安装的商城**请使用下方的 `sudo dujiao-fork configure-network` 菜单功能：
 
 ```bash
@@ -129,9 +140,11 @@ sudo env DUJIAO_BIND=0.0.0.0 DUJIAO_PORT=18080 \
 | `sudo dujiao-fork update` | 自动备份 → 更新 Fork `main` → 构建新镜像 → 重启并检查 |
 | `sudo dujiao-fork help` | 查看命令与可配置参数 |
 | `sudo dujiao-fork configure-network` | 交互式修改监听 IP、端口，自动重建应用，失败尝试回滚 |
-| `sudo dujiao-fork configure-domain` | 一键绑定域名、申请 Caddy HTTPS 证书和自动续期 |
+| `sudo dujiao-fork configure-domain` | 域名 HTTPS 证书（自动续期） |
+| `sudo dujiao-fork configure-ip` | 公网 IPv4 HTTPS 短期证书（自动续期） |
+| `sudo dujiao-fork configure-https` | 交互选择域名或公网 IPv4 模式 |
 | `sudo dujiao-fork https-status` | 检查有效证书和商城 HTTPS 健康状态 |
-| `sudo dujiao-fork access` | 输出实际公网 IPv4 或已验证 HTTPS 域名的商城/后台完整链接 |
+| `sudo dujiao-fork access` | 显示已验证的域名/IP HTTPS 地址，或公网访问地址 |
 
 运行 **`sudo dujiao-fork`**（不带参数）可进入中文交互式菜单；脚本自动化仍可以使用上表的独立命令。菜单不会增加自动卸载、公开数据或修改支付设置等高危操作。
 
@@ -186,7 +199,7 @@ sudo dujiao-fork
 ├── compose.yaml         # 管理器生成的 Compose 配置
 ├── .env                 # Redis 密码、监听端口等敏感配置
 ├── compose.https.yaml  # HTTPS 启用后生成的 Caddy Compose 附加文件
-├── .https-domain        # 当前受本管理器维护的域名
+├── .https-domain        # 兼容旧版本的标记文件（域名或公网 IPv4）
 └── data/
     ├── config.yml       # 应用配置和密钥
     ├── db/              # SQLite 数据库

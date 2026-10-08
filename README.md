@@ -62,24 +62,24 @@ sudo dujiao-fork access    # 商城和后台完整地址
 
 商城默认容器内端口为 `8080`；如选择公网访问，宿主机默认使用 `18080`。公网无法访问时，检查 **云厂商安全组 / 主机防火墙 / 端口映射**，而不是只检查服务器本机。
 
-### 第三步：配置域名和 HTTPS
+### 第三步：配置域名或公网 IPv4 的 HTTPS
 
-域名的 DNS A 记录先指向服务器公网 IPv4，在云厂商安全组及主机防火墙开放 **TCP 80、443**：
+先在云厂商安全组与系统防火墙开放 **TCP 80、443**，再选择需要的 HTTPS 证书类型：
 
 ```bash
 sudo dujiao-fork
-# 在中文菜单选择「9：一键绑定域名并申请 HTTPS」
+# 选择 9 → 1) 域名证书  或  2) 公网 IPv4 证书
 ```
 
-安装器通过 Caddy 自动签发和续期证书；如果已有 Nginx / Nginx Proxy Manager 等占用 80/443，则应复用已有反向代理。详见 [通用 VPS 部署指南](docs/DEPLOYMENT.md)。
+域名需要提前配置 DNS A 记录；公网 IPv4 不需要域名，但 TCP 80/443 必须从公网直达本机。公网 IP 使用 Let's Encrypt `shortlived` 证书（**160 小时**），**Caddy 自动续期**，通过 `sudo dujiao-fork https-status` 检查有效期。已有 Nginx / NPM 占用 80/443 时不能直接使用内置 Caddy，应自行处理现有代理证书。详见 [通用 VPS 部署指南](docs/DEPLOYMENT.md)。
 
 ## 让 AI 管理商城（可随时关闭）
 
-AI 通过商城内置的 `https://shop.example.com/mcp` 连接，**无需在商城 VPS 上安装大模型**。OpenClaw/Codex/Claude Code 运行在你自己的电脑或 NAS，网站只提供安全受限的 MCP 接口。
+AI 通过商城内置的 `https://shop.example.com/mcp` 或 `https://你的公网IPv4/mcp` 连接，**无需在商城 VPS 上安装大模型**。OpenClaw/Codex/Claude Code 运行在你自己的电脑或 NAS，网站只提供安全受限的 MCP 接口。
 
 先登录后台 **系统设置 → AI 接入管理**：
 
-1. 配置并开启“**远程 MCP**”，填写实际 HTTPS 根域名。
+1. 配置并开启“**远程 MCP**”，填写真实可信 HTTPS 域名或已取得公信证书的公网 IPv4 地址。
 2. 手动开启“**AI 管家总开关**”（安装或升级后默认关闭）。
 3. 只有需要 AI 创建网站文章、公告或 Banner 草稿时，才另行开启“**网站内容编辑**”。
 4. AI 客户端首次连接时，在浏览器中核对客户端与授权范围；建议先仅授予只读权限。

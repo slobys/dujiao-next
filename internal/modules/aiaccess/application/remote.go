@@ -64,6 +64,26 @@ func SecureProxyRequest(req *http.Request) bool {
 	return ip.IsLoopback() || ip.IsPrivate()
 }
 
+// Public IPv4 origins are acceptable only when a trusted public IP TLS
+// certificate is installed by the deployment manager. Do not accept private,
+// loopback, CGNAT, documentation or reserved IP literals in OAuth origins.
+func validPublicIPv4Origin(addr netip.Addr) bool {
+	if !addr.Is4() || !addr.IsGlobalUnicast() || addr.IsPrivate() || addr.IsLoopback() {
+		return false
+	}
+	for _, cidr := range []string{
+		"0.0.0.0/8", "100.64.0.0/10", "169.254.0.0/16",
+		"192.0.0.0/24", "192.0.2.0/24", "192.88.99.0/24",
+		"198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24",
+		"224.0.0.0/4", "240.0.0.0/4",
+	} {
+		if netip.MustParsePrefix(cidr).Contains(addr) {
+			return false
+		}
+	}
+	return true
+}
+
 func HTTPSOrigin(raw string) (string, error) {
 	if len(raw) < 9 || len(raw) > 253 || strings.TrimSpace(raw) != raw {
 		return "", ErrInvalid
@@ -73,16 +93,23 @@ func HTTPSOrigin(raw string) (string, error) {
 		return "", ErrInvalid
 	}
 	host := strings.ToLower(parsed.Hostname())
-	if len(host) > 253 || net.ParseIP(host) != nil {
+	if len(host) > 253 {
 		return "", ErrInvalid
 	}
-	labels := strings.Split(host, ".")
-	if len(labels) < 2 || !regexp.MustCompile(`^[a-z]{2,63}$`).MatchString(labels[len(labels)-1]) {
-		return "", ErrInvalid
-	}
-	for _, label := range labels {
-		if !dnsLabel.MatchString(label) {
+	if literal, err := netip.ParseAddr(host); err == nil {
+		if !validPublicIPv4Origin(literal) {
 			return "", ErrInvalid
+		}
+		host = literal.String()
+	} else {
+		labels := strings.Split(host, ".")
+		if len(labels) < 2 || !regexp.MustCompile(`^[a-z]{2,63}$`).MatchString(labels[len(labels)-1]) {
+			return "", ErrInvalid
+		}
+		for _, label := range labels {
+			if !dnsLabel.MatchString(label) {
+				return "", ErrInvalid
+			}
 		}
 	}
 	port := parsed.Port()
