@@ -54,12 +54,34 @@ curl -fsS http://127.0.0.1:18080/health
 sudo dujiao-fork status
 ```
 
-### 3. 域名与 HTTPS
+### 3. 一键配置域名 + HTTPS（Caddy 自动申请和续期）
 
-**安装器不自动申请证书或设置反向代理。** 正式上线请通过 Nginx、Nginx Proxy Manager (NPM) 或 Caddy 将 HTTPS 域名转发至本机 `127.0.0.1:18080`，并核对 `config.yml` 中的 `server.trusted_proxies`。
+先在域名 DNS 中添加 **A 记录**，例如将 `shop.example.com` 指向 Vultr **公网 IPv4**，在 Vultr 云防火墙和系统防火墙开放 **TCP 80/443**。检查错误的 AAAA/IPv6 记录。使用 Cloudflare 时，首次申请证书建议先用**仅 DNS（灰云）**；启用代理后选 **Full (strict)**，不要使用 Flexible。
 
-> 如果 NPM 运行在**另一个 Docker 容器**中，该容器内的 `127.0.0.1` 不是宿主机。请按实际 Docker 网络或宿主机地址配置上游，不要直接照搬 `127.0.0.1`。
+已安装本 Fork 的服务器执行：
 
+```bash
+sudo dujiao-fork
+# 选择 9) 一键绑定域名并申请 HTTPS 证书，按提示输入 shop.example.com
+```
+
+也支持自动化命令：
+
+```bash
+sudo env DUJIAO_DOMAIN=shop.example.com DUJIAO_ACME_EMAIL=admin@example.com \
+  dujiao-fork configure-domain
+```
+
+安装器会验证域名格式和 DNS，检测 80/443 是否被已有容器或服务占用，然后新增独立 **Caddy Docker 服务**，先校验配置再启动。Caddy 自动申请公信 CA 证书并负责自动续期与 HTTP → HTTPS 跳转。**只有通过直连 Caddy 的可信 HTTPS 证书链、域名和商城 `/health` 检查，才会报告成功。**证书和 ACME 账户数据会在 `data/caddy/data/` 持久化，且包含在备份中。
+
+HTTPS 成功后，若原商城的 `18080` 仍监听公网，安装器会尝试将它改为 `127.0.0.1`，仅重建应用容器、不重编译、不修改 Redis 或数据库；Caddy 在 Docker 内网通过 `app:8080` 访问商城。若修改端口失败会明确警告。证书签发或域名更换失败，会尽力恢复先前的 HTTPS 配置。
+
+```bash
+sudo dujiao-fork https-status    # 校验证书、域名与商城可访问性
+sudo dujiao-fork logs            # Caddy + 商城 + Redis 日志
+```
+
+如果 80/443 已被 Nginx、Apache、NPM 或其他 Caddy 占用，安装器不会关闭或接管它们；请直接在现有反向代理中配置 HTTPS。**首次 HTTPS 申请必须确保公网能够验证域名。**安装器不会自动修改 Vultr 云防火墙或 Cloudflare DNS。反向代理需要按照实际网络设置 `server.trusted_proxies`；在另一个 Docker 容器中，`127.0.0.1` 不是宿主机。
 仅在确实需要从其它容器/机器访问宿主机端口，并已做好防火墙限制时，才在**首次安装时**指定监听地址和端口；**已安装的商城**请使用下方的 `sudo dujiao-fork configure-network` 菜单功能：
 
 ```bash
@@ -82,6 +104,8 @@ sudo env DUJIAO_BIND=0.0.0.0 DUJIAO_PORT=18080 \
 | `sudo dujiao-fork update` | 自动备份 → 更新 Fork `main` → 构建新镜像 → 重启并检查 |
 | `sudo dujiao-fork help` | 查看命令与可配置参数 |
 | `sudo dujiao-fork configure-network` | 交互式修改监听 IP、端口，自动重建应用，失败尝试回滚 |
+| `sudo dujiao-fork configure-domain` | 一键绑定域名、申请 Caddy HTTPS 证书和自动续期 |
+| `sudo dujiao-fork https-status` | 检查有效证书和商城 HTTPS 健康状态 |
 
 运行 **`sudo dujiao-fork`**（不带参数）可进入中文交互式菜单；脚本自动化仍可以使用上表的独立命令。菜单不会增加自动卸载、公开数据或修改支付设置等高危操作。
 
@@ -135,18 +159,21 @@ sudo dujiao-fork
 ├── src/                 # 本 Fork 源码（Git 仓库）
 ├── compose.yaml         # 管理器生成的 Compose 配置
 ├── .env                 # Redis 密码、监听端口等敏感配置
+├── compose.https.yaml  # HTTPS 启用后生成的 Caddy Compose 附加文件
+├── .https-domain        # 当前受本管理器维护的域名
 └── data/
     ├── config.yml       # 应用配置和密钥
     ├── db/              # SQLite 数据库
     ├── uploads/         # 商品及站点上传文件
     ├── logs/            # 日志
-    └── redis/           # Redis 持久化数据
+    ├── redis/           # Redis 持久化数据
+    └── caddy/           # HTTPS 代理配置、自动续期账户和证书
 
 /var/backups/dujiao-next-fork/
 └── dujiao-next-fork-*.tar.gz  # 备份归档
 ```
 
-执行 `sudo dujiao-fork backup` 时会短暂停止应用与 Redis 写入，备份 `.env`、Compose 配置及 `data/`，并校验归档的可读取性。**备份含有密钥和用户数据，必须限制访问、加密异地保存，并定期验证恢复流程。**
+执行 `sudo dujiao-fork backup` 时会短暂停止商城与 Redis（启用 HTTPS 时还包括 Caddy），备份 `.env`、Compose 配置、域名、证书及 `data/`，并校验归档的可读取性。**备份含有密钥和用户数据，必须限制访问、加密异地保存，并定期验证恢复流程。**
 
 首次安装前可用环境变量调整安装目录：
 

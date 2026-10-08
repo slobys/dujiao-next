@@ -284,8 +284,8 @@ else
 fi
 check "existing flock made no APT calls" test ! -e "$TEST_TMP/flock-existing-apt"
 
-menu_expected=(install status logs backup update restart help configure-network exit)
-menu_codes=(1 2 3 4 5 6 7 8 0)
+menu_expected=(install status logs backup update restart help configure-network configure-domain https-status exit)
+menu_codes=(1 2 3 4 5 6 7 8 9 10 0)
 for i in "${!menu_codes[@]}"; do
   actual=$(menu_command_for "${menu_codes[$i]}")
   if [[ "$actual" == "${menu_expected[$i]}" ]]; then
@@ -294,7 +294,7 @@ for i in "${!menu_codes[@]}"; do
     fail "menu choice ${menu_codes[$i]} resolves to ${menu_expected[$i]}"
   fi
 done
-if menu_command_for 9 >/dev/null; then
+if menu_command_for 11 >/dev/null; then
   fail "menu rejects unknown choices"
 else
   pass "menu rejects unknown choices"
@@ -586,5 +586,281 @@ check "CLI can restore publicly bound port with explicit consent" assert_equal_n
 check "CLI keeps Redis secret private" grep -Fxq 'REDIS_PASSWORD=do-not-print-secret' "$network_file"
 check "no .env rollback artifacts remain" test -z "$(find "$INSTALL_DIR" -maxdepth 1 -name '.env.network-backup.*' -print -quit)"
 
+
+# HTTPS add-on tests use mocked Compose and DNS. Nothing on the real host is
+# bound, no CA requests are made, and no unrelated Docker service is changed.
+check "valid domain passes HTTPS validation" validate_domain shop.naiyous.com
+check "subdomain with hyphen passes" validate_domain shop-dev.example.com
+reject "rejects wildcard domain" validate_domain '*.example.com'
+reject "rejects domain with URL prefix" validate_domain 'https://shop.example.com'
+reject "rejects public IP instead of domain" validate_domain '1.2.3.4'
+reject "rejects local development domain" validate_domain 'shop.local'
+reject "rejects domain with Caddyfile injection" validate_domain $'shop.example.com\nreverse_proxy evil'
+reject "rejects leading label hyphen" validate_domain '-shop.example.com'
+reject "rejects oversized domain label" validate_domain "$(printf 'a%.0s' {1..65}).example.com"
+check "accepts optional ACME email" validate_acme_email alerts@example.com
+check "supports empty optional ACME email" validate_acme_email ''
+reject "rejects Caddyfile injection through email" validate_acme_email $'a@example.com\nreverse_proxy localhost'
+reject "rejects shell-special contact email" validate_acme_email 'user@example.com{foo}'
+
+render_https_compose > "$TEST_DIR/https-rendered.yaml"
+check "HTTPS proxy uses official Caddy image" grep -Fq 'image: caddy:2-alpine' "$TEST_DIR/https-rendered.yaml"
+check "HTTPS proxy publishes TCP port 80" grep -Fq '"80:80/tcp"' "$TEST_DIR/https-rendered.yaml"
+check "HTTPS proxy publishes TCP port 443" grep -Fq '"443:443/tcp"' "$TEST_DIR/https-rendered.yaml"
+check "HTTPS certificates persist across restarts" grep -Fq './data/caddy/data:/data' "$TEST_DIR/https-rendered.yaml"
+check "HTTPS caddy config persists across restarts" grep -Fq './data/caddy/config:/config' "$TEST_DIR/https-rendered.yaml"
+check "HTTPS proxy uses internal app service" bash -c '! grep -Eq "network_mode: host|privileged:" "$1"' _ "$TEST_DIR/https-rendered.yaml"
+render_caddyfile shop.example.com alerts@example.com > "$TEST_DIR/rendered-Caddyfile"
+check "Caddyfile uses exact domain" grep -Fxq 'shop.example.com {' "$TEST_DIR/rendered-Caddyfile"
+check "Caddyfile uses app internal port" grep -Fxq '  reverse_proxy app:8080' "$TEST_DIR/rendered-Caddyfile"
+check "Caddyfile includes ACME email" grep -Fxq '  email alerts@example.com' "$TEST_DIR/rendered-Caddyfile"
+
+# Verify the new additive Compose service with the installed CLI when present.
+if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+  cp "$TEST_DIR/https-rendered.yaml" "$INSTALL_DIR/compose.https.yaml"
+  printf 'shop.example.com\n' > "$INSTALL_DIR/.https-domain"
+  mkdir -p "$INSTALL_DIR/data/caddy/"{data,config}
+  cp "$TEST_DIR/rendered-Caddyfile" "$INSTALL_DIR/data/caddy/Caddyfile"
+  if docker compose --project-name dujiao-next-fork-https-test \
+     --project-directory "$INSTALL_DIR" --env-file "$INSTALL_DIR/.env" \
+     -f "$INSTALL_DIR/compose.yaml" -f "$INSTALL_DIR/compose.https.yaml" config --quiet; then
+    pass "HTTPS Docker Compose override schema validates"
+  else
+    fail "HTTPS Docker Compose override schema validates"
+  fi
+  rm -f "$INSTALL_DIR/compose.https.yaml" "$INSTALL_DIR/.https-domain" "$INSTALL_DIR/data/caddy/Caddyfile"
+else
+  printf 'ok - HTTPS Docker Compose override # SKIP CLI unavailable\n'
+fi
+
+# A real port-collision precheck must reject other Docker containers before
+# the later tests replace the function with a harmless deterministic mock.
+if (
+  docker() { printf '0.0.0.0:443->443/tcp\n'; }
+  check_https_port_conflicts
+) >/dev/null 2>&1; then
+  fail "refuses takeover of existing Docker 443 binding"
+else
+  pass "refuses takeover of existing Docker 443 binding"
+fi
+
+# Further tests must not rely on the runner's real Docker daemon.
+docker() { :; }
+
+# HTTPS verification must reject redirects and TLS/connection failures,
+# not merely a reachable Caddy container.
+if ( curl() { printf '200'; }; verify_https shop.example.com ); then
+  pass "HTTPS verifier accepts valid TLS with HTTP 200"
+else
+  fail "HTTPS verifier accepts valid TLS with HTTP 200"
+fi
+if ( curl() { printf '302'; }; verify_https shop.example.com ); then
+  fail "HTTPS verifier rejects HTTP redirect instead of healthy backend"
+else
+  pass "HTTPS verifier rejects HTTP redirect instead of healthy backend"
+fi
+if ( curl() { return 60; }; verify_https shop.example.com ); then
+  fail "HTTPS verifier rejects TLS validation error"
+else
+  pass "HTTPS verifier rejects TLS validation error"
+fi
+
+# Already managed: a success must retain the old app's database/upload files
+# and must not recreate Redis, while keeping HTTPS metadata and ACME volumes.
+network_env_write "$network_file" "127.0.0.1" "18080"
+: > "$TEST_DIR/https-actions"
+compose() { printf '%s\n' "$*" >> "$TEST_DIR/https-actions"; }
+check_domain_dns() { printf 'mocked DNS A record\n'; }
+check_https_port_conflicts() { printf 'checked ports 80/443\n' >> "$TEST_DIR/https-actions"; }
+wait_for_https() { return 0; }
+verify_https() { return 0; }
+DUJIAO_DOMAIN=shop.example.com DUJIAO_ACME_EMAIL=alerts@example.com run_configure_https
+check "HTTPS config marker created" grep -Fxq 'shop.example.com' "$INSTALL_DIR/.https-domain"
+check "HTTPS Compose override is enabled" https_enabled
+check "HTTPS Caddyfile is private" test "$(stat -c '%a' "$INSTALL_DIR/data/caddy/Caddyfile")" = "600"
+check "HTTPS cert state directory is private" test "$(stat -c '%a' "$INSTALL_DIR/data/caddy/data")" = "700"
+check "HTTPS CLI starts only Caddy service" grep -Fxq 'up -d --no-build --no-deps --force-recreate caddy' "$TEST_DIR/https-actions"
+check "Caddy config validated before start" grep -Fxq 'run --rm --no-deps --entrypoint caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile' "$TEST_DIR/https-actions"
+check "HTTPS requires Compose schema validation" grep -Fxq 'config --quiet' "$TEST_DIR/https-actions"
+check "HTTPS set-up doesn't touch Redis service" bash -c '! grep -Eq "(stop redis|force-recreate redis|stop app|force-recreate app)" "$1"' _ "$TEST_DIR/https-actions"
+check "HTTPS leaves SQLite unmodified" grep -Fxq 'sqlite content' "$INSTALL_DIR/data/db/dujiao.db"
+check "HTTPS leaves Redis secrets unmodified" grep -Fxq 'REDIS_PASSWORD=do-not-print-secret' "$network_file"
+check "HTTPS leaves uploads unmodified" grep -Fxq 'upload content' "$INSTALL_DIR/data/uploads/file.txt"
+check "success clears HTTPS rollback state" test -z "$(find "$INSTALL_DIR" -maxdepth 1 -name '.https-backup.*' -print -quit)"
+check "HTTPS startup does not change app's old port" assert_equal_network "127.0.0.1 18080"
+: > "$TEST_DIR/https-actions"
+DUJIAO_DOMAIN=shop.example.com run_configure_https
+check "reusing same domain doesn't recreate any containers" test ! -s "$TEST_DIR/https-actions"
+
+# New HTTPS domains are included in cold backups and HTTPS proxy is stopped
+# along with the writers (certificates and account key should not be copied
+# while Caddy is writing its data directory).
+BACKUP_DIR="$TEST_DIR/https-backups"
+run_backup
+https_backup=$(find "$BACKUP_DIR" -maxdepth 1 -name '*.tar.gz' -type f -print -quit)
+check "HTTPS backup includes domain marker" bash -c 'tar -tzf "$1" | grep -q "^.https-domain$"' _ "$https_backup"
+check "HTTPS backup includes Compose override" bash -c 'tar -tzf "$1" | grep -q "^compose.https.yaml$"' _ "$https_backup"
+check "HTTPS backup includes Caddyfile" bash -c 'tar -tzf "$1" | grep -q "^data/caddy/Caddyfile$"' _ "$https_backup"
+check "HTTPS backup stops cert writer" grep -Fxq 'stop app redis caddy' "$TEST_DIR/https-actions"
+check "HTTPS cold backup resumes services" grep -Fxq 'up -d --no-build' "$TEST_DIR/https-actions"
+
+# Existing domain replacement, invalid config => rollback on EXIT.
+: > "$TEST_DIR/https-bad-config-actions"
+if (
+  DUJIAO_DOMAIN=new.example.com
+  DUJIAO_ACME_EMAIL=''
+  compose() {
+    printf '%s\n' "$*" >> "$TEST_DIR/https-bad-config-actions"
+    [[ "$*" != "config --quiet" ]]
+  }
+  HTTPS_PENDING=0
+  HTTPS_BACKUP_DIR=""
+  HTTPS_CADDY_STARTED=0
+  trap cleanup EXIT
+  run_configure_https
+) >/dev/null 2>&1; then
+  fail "invalid HTTPS Compose config must not be considered success"
+else
+  pass "invalid HTTPS Compose config must not be considered success"
+fi
+check "invalid Compose HTTPS restores old domain" grep -Fxq 'shop.example.com' "$INSTALL_DIR/.https-domain"
+check "invalid Compose HTTPS restores original Caddyfile" grep -Fxq 'shop.example.com {' "$INSTALL_DIR/data/caddy/Caddyfile"
+check "no Caddy restart on preflight failure" bash -c '! grep -q "force-recreate caddy" "$1"' _ "$TEST_DIR/https-bad-config-actions"
+check "invalid Compose cleanup removed private backup" test -z "$(find "$INSTALL_DIR" -maxdepth 1 -name '.https-backup.*' -print -quit)"
+
+# New domain container starts, but CA certificate cannot be verified:
+# rollback retains the previously working domain and re-creates only Caddy.
+: > "$TEST_DIR/https-bad-certificate-actions"
+if (
+  DUJIAO_DOMAIN=second.example.com
+  DUJIAO_ACME_EMAIL=''
+  compose() { printf '%s\n' "$*" >> "$TEST_DIR/https-bad-certificate-actions"; }
+  wait_for_https() { return 1; }
+  HTTPS_PENDING=0
+  HTTPS_BACKUP_DIR=""
+  HTTPS_CADDY_STARTED=0
+  trap cleanup EXIT
+  run_configure_https
+) >/dev/null 2>&1; then
+  fail "unverified HTTPS certificate must not be reported as success"
+else
+  pass "unverified HTTPS certificate must not be reported as success"
+fi
+check "failed certificate restores original domain" grep -Fxq 'shop.example.com' "$INSTALL_DIR/.https-domain"
+check "failed certificate restores original Caddyfile" grep -Fxq 'shop.example.com {' "$INSTALL_DIR/data/caddy/Caddyfile"
+check "failed certificate restores Caddy container" test "$(grep -Fc 'up -d --no-build --no-deps --force-recreate caddy' "$TEST_DIR/https-bad-certificate-actions")" = "2"
+check "failed certificate does not restart app or Redis" bash -c '! grep -Eq "(force-recreate app|stop redis)" "$1"' _ "$TEST_DIR/https-bad-certificate-actions"
+
+# Initial deployment failure removes just the new HTTPS configuration, without
+# deleting Caddy's persistent /data or touching the existing commerce stack.
+mkdir -p "$TEST_DIR/fresh-https/src/.git" "$TEST_DIR/fresh-https/data/caddy/"
+cp "$INSTALL_DIR/compose.yaml" "$TEST_DIR/fresh-https/compose.yaml"
+cp "$network_file" "$TEST_DIR/fresh-https/.env"
+: > "$TEST_DIR/fresh-https/$MANAGED_MARKER"
+mkdir -p "$TEST_DIR/fresh-https/data/caddy/data"
+printf 'acme-account-state\n' > "$TEST_DIR/fresh-https/data/caddy/data/account.txt"
+if (
+  INSTALL_DIR="$TEST_DIR/fresh-https"
+  DUJIAO_DOMAIN=first.example.com
+  DUJIAO_ACME_EMAIL=''
+  compose() { printf '%s\n' "$*" >> "$TEST_DIR/https-first-fail-actions"; }
+  check_domain_dns() { return 0; }
+  check_https_port_conflicts() { return 0; }
+  wait_for_https() { return 1; }
+  HTTPS_PENDING=0
+  HTTPS_BACKUP_DIR=""
+  HTTPS_CADDY_STARTED=0
+  HTTPS_HAD_CONFIG=0
+  trap cleanup EXIT
+  run_configure_https
+) >/dev/null 2>&1; then
+  fail "initial HTTPS setup refuses failed certificate verification"
+else
+  pass "initial HTTPS setup refuses failed certificate verification"
+fi
+check "initial HTTPS failure removes domain marker" test ! -e "$TEST_DIR/fresh-https/.https-domain"
+check "initial HTTPS failure removes addon Compose file" test ! -e "$TEST_DIR/fresh-https/compose.https.yaml"
+check "initial HTTPS failure removes invalid Caddyfile" test ! -e "$TEST_DIR/fresh-https/data/caddy/Caddyfile"
+check "initial HTTPS failure preserves ACME state data" grep -Fxq 'acme-account-state' "$TEST_DIR/fresh-https/data/caddy/data/account.txt"
+check "initial HTTPS failure stops/removes only Caddy" grep -Fxq 'rm -s -f caddy' "$TEST_DIR/https-first-fail-actions"
+
+
+
+# A successful first HTTPS activation must also close the formerly public
+# plaintext app binding, without touching Redis or changing the app image.
+if (
+  INSTALL_DIR="$TEST_DIR/fresh-https"
+  DUJIAO_DOMAIN=shop.example.com
+  DUJIAO_ACME_EMAIL=''
+  network_env_write "$INSTALL_DIR/.env" 0.0.0.0 18080
+  compose() { printf '%s\n' "$*" >> "$TEST_DIR/https-isolation-actions"; }
+  verify_https() { return 0; }
+  wait_for_https() { return 0; }
+  wait_for_health() { return 0; }
+  HTTPS_PENDING=0
+  HTTPS_CADDY_STARTED=0
+  HTTPS_HAD_CONFIG=0
+  run_configure_https
+  [[ "$(network_env_current)" == '127.0.0.1 18080' ]]
+); then
+  pass "HTTPS success automatically isolates previous public HTTP port"
+else
+  fail "HTTPS success automatically isolates previous public HTTP port"
+fi
+check "HTTPS auto-isolation recreates app without rebuilding" grep -Fxq 'up -d --no-build --no-deps --force-recreate app' "$TEST_DIR/https-isolation-actions"
+if grep -Eq '(^stop redis$|--force-recreate redis|--build app)' "$TEST_DIR/https-isolation-actions"; then
+  fail "HTTPS auto-isolation must not restart Redis/build app"
+else
+  pass "HTTPS auto-isolation must not restart Redis/build app"
+fi
+
+# Existing but degraded HTTPS should be repairable by rerunning the same
+# configure-domain command after DNS/firewall has been fixed.
+: > "$TEST_DIR/https-retry-actions"
+if (
+  INSTALL_DIR="$TEST_DIR/fresh-https"
+  DUJIAO_DOMAIN=shop.example.com
+  DUJIAO_ACME_EMAIL=''
+  compose() { printf '%s\n' "$*" >> "$TEST_DIR/https-retry-actions"; }
+  verify_https() { return 1; }
+  wait_for_https() { return 0; }
+  HTTPS_PENDING=0
+  HTTPS_HAD_CONFIG=0
+  HTTPS_CADDY_STARTED=0
+  run_configure_https
+); then
+  pass "degraded HTTPS can retry same-domain provisioning"
+else
+  fail "degraded HTTPS can retry same-domain provisioning"
+fi
+check "same-domain retry restarts proxy only" grep -Fxq 'up -d --no-build --no-deps --force-recreate caddy' "$TEST_DIR/https-retry-actions"
+
+
+# Domain DNS errors should fail before any Compose or file mutation.
+: > "$TEST_DIR/dns-failed-actions"
+if (
+  DUJIAO_DOMAIN=unresolved.example.com
+  check_domain_dns() { return 1; }
+  compose() { printf '%s\n' "$*" >> "$TEST_DIR/dns-failed-actions"; }
+  run_configure_https
+) >/dev/null 2>&1; then
+  fail "unresolved domain must fail without changing HTTPS"
+else
+  pass "unresolved domain must fail without changing HTTPS"
+fi
+check "DNS failure avoids Compose modifications" test ! -s "$TEST_DIR/dns-failed-actions"
+check "DNS failure retains previously enabled domain" grep -Fxq shop.example.com "$INSTALL_DIR/.https-domain"
+
+# Avoid directory-level symlink traversal for the Caddy certificate store.
+mkdir -p "$TEST_DIR/https-link-install/data"
+ln -s "$INSTALL_DIR/data/caddy" "$TEST_DIR/https-link-install/data/caddy"
+if (
+  INSTALL_DIR="$TEST_DIR/https-link-install"
+  https_files_safe
+) >/dev/null 2>&1; then
+  fail "symlinked Caddy storage path is rejected"
+else
+  pass "symlinked Caddy storage path is rejected"
+fi
 printf '%d passed, %d failed\n' "$passed" "$failed"
 ((failed == 0))

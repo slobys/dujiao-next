@@ -17,15 +17,30 @@ die() { printf '[ERROR] %s\n' "$*" >&2; exit 1; }
 random_admin_password() { printf 'Dn-%s-Aa9!' "$(openssl rand -hex 16)"; }
 random_admin_path() { printf '/dj-%s' "$(openssl rand -hex 8)"; }
 
+https_enabled() {
+  [[ -f "$INSTALL_DIR/.https-domain" &&
+     -f "$INSTALL_DIR/compose.https.yaml" &&
+     -f "$INSTALL_DIR/data/caddy/Caddyfile" ]]
+}
+
 compose() {
+  local -a files=(-f "$INSTALL_DIR/compose.yaml")
+  if [[ -e "$INSTALL_DIR/compose.https.yaml" ]]; then
+    https_enabled || die "HTTPS 附加配置不完整，拒绝接管或修改容器。"
+    files+=(-f "$INSTALL_DIR/compose.https.yaml")
+  fi
   docker compose --project-name "$COMPOSE_PROJECT" \
     --project-directory "$INSTALL_DIR" \
-    --env-file "$INSTALL_DIR/.env" -f "$INSTALL_DIR/compose.yaml" "$@"
+    --env-file "$INSTALL_DIR/.env" "${files[@]}" "$@"
 }
 
 cleanup() {
   local original_exit=$?
   trap - EXIT
+  if (( HTTPS_PENDING == 1 )); then
+    info "HTTPS 启用/变更未完成，尝试恢复此前的代理配置..."
+    rollback_https || info "HTTPS 自动恢复未完全成功，备份保留：$HTTPS_BACKUP_DIR"
+  fi
   if (( NETWORK_PENDING == 1 )); then
     info "监听配置未成功应用，正在恢复此前的 .env 和应用容器..."
     if [[ -n "$NETWORK_BACKUP" && -f "$NETWORK_BACKUP" ]] &&
@@ -498,10 +513,15 @@ run_backup() {
   ts=$(date -u +%Y%m%dT%H%M%SZ)
   archive="$BACKUP_DIR/dujiao-next-fork-${ts}-$$.tar.gz"
   tmp="${archive}.tmp"
-  # Stop writers so SQLite WAL, Redis AOF and uploaded files are consistent.
+  # Stop writers, including the HTTPS proxy's certificate state if enabled.
+  local -a services=(app redis) backup_files=(.env compose.yaml data)
+  if https_enabled; then
+    services+=(caddy)
+    backup_files+=(compose.https.yaml .https-domain)
+  fi
   RESTORE_AFTER_BACKUP=1
-  compose stop app redis
-  if ! tar -C "$INSTALL_DIR" -czf "$tmp" .env compose.yaml data; then
+  compose stop "${services[@]}"
+  if ! tar -C "$INSTALL_DIR" -czf "$tmp" "${backup_files[@]}"; then
     rm -f -- "$tmp"
     die "备份失败，原数据未删除。"
   fi
@@ -680,6 +700,291 @@ run_configure_network() {
   fi
 }
 
+
+HTTPS_PENDING=0
+HTTPS_HAD_CONFIG=0
+HTTPS_CADDY_STARTED=0
+HTTPS_BACKUP_DIR=""
+
+validate_domain() {
+  python3 - "$1" <<'PY'
+import re
+import sys
+domain = sys.argv[1]
+labels = domain.split(".")
+valid = (
+    4 <= len(domain) <= 253
+    and len(labels) >= 2
+    and all(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", part)
+            for part in labels)
+    and len(labels[-1]) >= 2
+    and labels[-1].isalpha()
+    and domain.lower() == domain
+    and not domain.endswith((".local", ".localhost", ".internal", ".test", ".invalid"))
+)
+sys.exit(0 if valid else 1)
+PY
+}
+
+validate_acme_email() {
+  [[ -z "$1" ]] && return 0
+  python3 - "$1" <<'PY'
+import re
+import sys
+email = sys.argv[1]
+sys.exit(0 if len(email) <= 254 and re.fullmatch(
+    r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9](?:[A-Za-z0-9.\-]*[A-Za-z0-9])?",
+    email) and "\n" not in email else 1)
+PY
+}
+
+check_domain_dns() {
+  python3 - "$1" <<'PY'
+import socket
+import sys
+try:
+    addresses = {row[4][0] for row in
+                 socket.getaddrinfo(sys.argv[1], 443, family=socket.AF_INET,
+                                    type=socket.SOCK_STREAM)}
+except (socket.gaierror, OSError):
+    addresses = set()
+if not addresses:
+    sys.exit(1)
+print("域名 A 记录解析结果：" + ", ".join(sorted(addresses)))
+PY
+}
+
+check_https_port_conflicts() {
+  # Docker's NAT port allocation can evade ordinary socket listeners.
+  local published
+  published=$(docker ps --format '{{.Ports}}') ||
+    die "无法检查 Docker 端口占用状态，拒绝接管其他服务。"
+  if grep -Eq '(^|[[:space:],])[^[:space:],]*:(80|443)->' <<< "$published"; then
+    die "Docker 容器已占用 80/443（如 NPM/Nginx）；请使用已有反向代理，本脚本不会接管它。"
+  fi
+  if ! python3 - <<'PY'
+import socket
+for port in (80, 443):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        try:
+            sock.bind(("0.0.0.0", port))
+        except OSError:
+            raise SystemExit(1)
+PY
+  then
+    die "80/443 被系统进程占用，请检查 Nginx/Caddy/Apache。"
+  fi
+}
+
+render_https_compose() {
+  cat <<'YAML'
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "80:80/tcp"
+      - "443:443/tcp"
+    volumes:
+      - ./data/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./data/caddy/data:/data
+      - ./data/caddy/config:/config
+    security_opt:
+      - no-new-privileges:true
+YAML
+}
+
+render_caddyfile() {
+  local domain=$1 email=$2
+  validate_domain "$domain" || die "域名格式无效。"
+  validate_acme_email "$email" || die "证书联系邮箱格式无效。"
+  if [[ -n "$email" ]]; then
+    printf '{\n  email %s\n}\n\n' "$email"
+  fi
+  printf '%s {\n  encode zstd gzip\n  reverse_proxy app:8080\n  header X-Content-Type-Options "nosniff"\n}\n' "$domain"
+}
+
+https_current_domain() {
+  https_enabled || die "尚未配置 HTTPS 域名。"
+  local domain
+  domain=$(cat "$INSTALL_DIR/.https-domain")
+  validate_domain "$domain" || die "HTTPS 域名标记无效，拒绝操作。"
+  printf '%s\n' "$domain"
+}
+
+https_files_safe() {
+  local path
+  for path in "$INSTALL_DIR/data/caddy" "$INSTALL_DIR/data/caddy/data" \
+              "$INSTALL_DIR/data/caddy/config" \
+              "$INSTALL_DIR/compose.https.yaml" "$INSTALL_DIR/.https-domain" \
+              "$INSTALL_DIR/data/caddy/Caddyfile"; do
+    [[ ! -L "$path" ]] || die "HTTPS 配置含符号链接，拒绝修改：$path"
+  done
+  if [[ -e "$INSTALL_DIR/compose.https.yaml" ||
+        -e "$INSTALL_DIR/.https-domain" ||
+        -e "$INSTALL_DIR/data/caddy/Caddyfile" ]]; then
+    https_enabled || die "发现不完整的 HTTPS 配置，拒绝覆盖既有文件。"
+  fi
+}
+
+verify_https() {
+  local domain=$1 status
+  # Connect to local Caddy while verifying public certificate chain and SNI.
+  # Never use -k/--insecure. A redirect is not a healthy application.
+  status=$(curl --noproxy '*' --silent --show-error --output /dev/null \
+    --write-out '%{http_code}' --connect-timeout 3 --max-time 7 \
+    --resolve "$domain:443:127.0.0.1" "https://${domain}/health" 2>/dev/null) ||
+    return 1
+  [[ "$status" == "200" ]]
+}
+
+wait_for_https() {
+  local domain=$1 i
+  for ((i=0; i<40; i++)); do
+    verify_https "$domain" && return 0
+    sleep 3
+  done
+  compose logs --tail=35 caddy >&2 || true
+  return 1
+}
+
+rollback_https() {
+  (( HTTPS_PENDING == 1 )) || return 0
+  if (( HTTPS_HAD_CONFIG == 1 )); then
+    local file
+    for file in .https-domain compose.https.yaml; do
+      install -m 0600 "$HTTPS_BACKUP_DIR/$file" "$INSTALL_DIR/$file" ||
+        return 1
+    done
+    install -m 0600 "$HTTPS_BACKUP_DIR/Caddyfile" "$INSTALL_DIR/data/caddy/Caddyfile" ||
+      return 1
+    if (( HTTPS_CADDY_STARTED == 1 )); then
+      compose up -d --no-build --no-deps --force-recreate caddy ||
+        return 1
+    fi
+  else
+    if (( HTTPS_CADDY_STARTED == 1 )); then
+      compose rm -s -f caddy || return 1
+    fi
+    rm -f -- "$INSTALL_DIR/.https-domain" "$INSTALL_DIR/compose.https.yaml" \
+      "$INSTALL_DIR/data/caddy/Caddyfile" || return 1
+    # Never remove persistent CA account/certificate state.
+  fi
+  HTTPS_PENDING=0
+  rm -rf -- "$HTTPS_BACKUP_DIR"
+  HTTPS_BACKUP_DIR=""
+  info "HTTPS 配置已恢复；商城和 Redis 数据没有改变。"
+}
+
+run_configure_https() {
+  require_installed
+  https_files_safe
+  local domain=${DUJIAO_DOMAIN:-} email=${DUJIAO_ACME_EMAIL:-}
+  if [[ -z "$domain" ]]; then
+    [[ -r /dev/tty && -w /dev/tty ]] ||
+      die "非交互执行请设置 DUJIAO_DOMAIN=shop.example.com。"
+    printf '请输入商城域名（须已设置 A 记录）：' >/dev/tty
+    IFS= read -r domain </dev/tty || die "输入中断。"
+    printf '证书联系邮箱（可选，按回车跳过）：' >/dev/tty
+    IFS= read -r email </dev/tty || die "输入中断。"
+  fi
+  domain=${domain,,}
+  validate_domain "$domain" ||
+    die "请输入有效的真实域名；不支持通配符、IP、URL、localhost 或非 ASCII 字符。"
+  validate_acme_email "$email" || die "ACME 联系邮箱无效。"
+  has_command curl || die "证书验证需要 curl，请先安装 curl。"
+  info "正在检查域名解析..."
+  check_domain_dns "$domain" ||
+    die "域名还没有 IPv4 A 记录，请先修改 DNS 再重试。"
+  if https_enabled; then
+    local current
+    current=$(https_current_domain)
+    if [[ "$domain" == "$current" && -z "$email" ]]; then
+      if verify_https "$domain"; then
+        info "https://$domain 证书与 /health 均验证通过，Caddy 会自动续期。"
+        return 0
+      fi
+      info "此前配置的域名证书或容器不可用，将保留旧配置备份并重新尝试启动 Caddy。"
+    fi
+  else
+    # A stopped foreign Caddy with our Compose project label must not be
+    # silently re-adopted even if ports 80/443 currently appear free.
+    local foreign_caddy
+    foreign_caddy=$(docker ps -a \
+      --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" \
+      --filter "label=com.docker.compose.service=caddy" --format '{{.ID}}') ||
+      die "无法检查历史 Caddy 容器。"
+    [[ -z "$foreign_caddy" ]] ||
+      die "已有不属于本脚本配置的 Caddy 容器，拒绝接管。"
+    check_https_port_conflicts
+  fi
+
+  HTTPS_BACKUP_DIR=$(mktemp -d "$INSTALL_DIR/.https-backup.XXXXXXXX")
+  HTTPS_HAD_CONFIG=0
+  if https_enabled; then
+    HTTPS_HAD_CONFIG=1
+    cp "$INSTALL_DIR/.https-domain" "$INSTALL_DIR/compose.https.yaml" "$HTTPS_BACKUP_DIR/"
+    cp "$INSTALL_DIR/data/caddy/Caddyfile" "$HTTPS_BACKUP_DIR/Caddyfile"
+  fi
+  HTTPS_PENDING=1
+  HTTPS_CADDY_STARTED=0
+  mkdir -p "$INSTALL_DIR/data/caddy/"{data,config}
+  chmod 0700 "$INSTALL_DIR/data/caddy" "$INSTALL_DIR/data/caddy/"{data,config}
+  render_caddyfile "$domain" "$email" > "$INSTALL_DIR/data/caddy/Caddyfile"
+  render_https_compose > "$INSTALL_DIR/compose.https.yaml"
+  printf '%s\n' "$domain" > "$INSTALL_DIR/.https-domain"
+  chmod 0600 "$INSTALL_DIR/data/caddy/Caddyfile" "$INSTALL_DIR/.https-domain" \
+    "$INSTALL_DIR/compose.https.yaml"
+
+  compose config --quiet || die "HTTPS Compose 校验失败，正在恢复旧配置。"
+  # A short-lived Caddy validation container does not publish any host ports.
+  compose run --rm --no-deps --entrypoint caddy caddy validate \
+    --config /etc/caddy/Caddyfile --adapter caddyfile ||
+    die "Caddyfile 语法验证失败，正在恢复旧配置。"
+  HTTPS_CADDY_STARTED=1
+  compose up -d --no-build --no-deps --force-recreate caddy ||
+    die "Caddy 启动失败，正在恢复旧配置。"
+  info "正在等待 Let's Encrypt/公信 CA 证书签发与 HTTPS 实际验证..."
+  wait_for_https "$domain" ||
+    die "HTTPS 证书仍不可用，请确认 Vultr 防火墙 TCP 80/443、DNS 和 Caddy 日志。"
+
+  HTTPS_PENDING=0
+  rm -rf -- "$HTTPS_BACKUP_DIR"
+  HTTPS_BACKUP_DIR=""
+  info "已验证 HTTPS：https://$domain；Caddy 自动续期和 HTTP 跳转已启用。"
+
+  local old_bind old_port
+  read -r old_bind old_port < <(network_env_current)
+  if [[ "$old_bind" != 127.* ]]; then
+    info "HTTPS 已可用，尝试收紧原来对公网开放的明文 HTTP 端口..."
+    if (apply_network_configuration "127.0.0.1" "$old_port"); then
+      info "应用的 HTTP 端口现在仅监听本机。"
+    else
+      info "警告：未能收紧明文 HTTP 端口 $old_port；请手动通过 configure-network 或防火墙限制访问。"
+    fi
+  fi
+}
+
+run_https_status() {
+  require_installed
+  if ! https_enabled; then
+    info "尚未配置本脚本管理的 HTTPS；运行 sudo dujiao-fork configure-domain。"
+    return 0
+  fi
+  local domain
+  domain=$(https_current_domain)
+  printf 'HTTPS 域名：https://%s\n' "$domain"
+  compose ps caddy
+  if verify_https "$domain"; then
+    info "证书链、域名和商城 /health 均验证通过。Caddy 自动续期已启用。"
+  else
+    die "HTTPS 证书或访问不可用，请检查 DNS、80/443、防火墙及 Caddy 日志。"
+  fi
+}
+
 menu_command_for() {
   case "${1:-}" in
     1) printf 'install' ;;
@@ -690,6 +995,8 @@ menu_command_for() {
     6) printf 'restart' ;;
     7) printf 'help' ;;
     8) printf 'configure-network' ;;
+    9) printf 'configure-domain' ;;
+    10) printf 'https-status' ;;
     0|q|Q) printf 'exit' ;;
     *) return 1 ;;
   esac
@@ -710,13 +1017,15 @@ run_menu() {
   6) 重启服务
   7) 命令帮助
   8) 修改监听 IP / 端口（自动重建应用，失败恢复）
+  9) 一键绑定域名并申请 HTTPS 证书（Caddy 自动续期）
+ 10) 查看 HTTPS 证书与访问状态
   0) 退出
 ===========================================
 MENU
     printf '请输入编号: ' >/dev/tty
     IFS= read -r choice </dev/tty || return 0
     if ! action=$(menu_command_for "$choice"); then
-      info "无效的菜单编号：请使用 0-8。"
+      info "无效的菜单编号：请使用 0-10。"
       continue
     fi
     [[ "$action" != "exit" ]] || return 0
@@ -729,10 +1038,12 @@ execute_command() {
     install) run_install ;;
     update) require_tools; run_update ;;
     status) require_tools; require_installed; compose ps ;;
-    logs) require_tools; require_installed; compose logs --no-color --tail=120 app redis ;;
+    logs) require_tools; require_installed; if https_enabled; then compose logs --no-color --tail=120 app redis caddy; else compose logs --no-color --tail=120 app redis; fi ;;
     restart) require_tools; require_installed; compose restart; wait_for_health || die "重启后健康检查未通过。" ;;
     backup) require_tools; run_backup ;;
     configure-network) require_tools; run_configure_network ;;
+    configure-domain) require_tools; run_configure_https ;;
+    https-status) require_tools; run_https_status ;;
     help) usage ;;
     *) die "未知操作。";;
   esac
@@ -741,12 +1052,16 @@ execute_command() {
 usage() {
   cat <<'HELP'
 Dujiao-Next fork Docker 管理器
-用法：sudo bash fork-deploy.sh [menu|install|update|status|logs|restart|backup|configure-network|help]
+用法：sudo bash fork-deploy.sh [menu|install|update|status|logs|restart|backup|configure-network|configure-domain|https-status|help]
       成功安装后可运行：sudo dujiao-fork （无参数打开交互菜单）
       也支持：sudo dujiao-fork <命令> （供自动化脚本调用）
 修改 IP/端口：sudo dujiao-fork configure-network （交互式）
 自动化配置：sudo env DUJIAO_BIND=127.0.0.1 DUJIAO_PORT=18080 dujiao-fork configure-network
 公网监听需在终端输入 PUBLIC 或额外指定 DUJIAO_CONFIRM_PUBLIC=YES（不建议裸露 HTTP）。
+域名 HTTPS：sudo dujiao-fork configure-domain（交互式）
+无人值守：sudo env DUJIAO_DOMAIN=shop.example.com DUJIAO_ACME_EMAIL=admin@example.com dujiao-fork configure-domain
+证书校验：sudo dujiao-fork https-status（Caddy 自动续期，不需要手动续签）
+请先设置域名 DNS A 记录，并确认公网 TCP 80/443 可访问。
 
 首次安装可指定：
   DUJIAO_BIND=127.0.0.1  (默认，仅本机监听；使用 HTTPS 反向代理)
@@ -763,7 +1078,7 @@ main() {
   local command="${1:-menu}"
   case "$command" in
     help|-h|--help) usage; return ;;
-    menu|install|update|status|logs|restart|backup|configure-network) ;;
+    menu|install|update|status|logs|restart|backup|configure-network|configure-domain|https-status) ;;
     *) usage; die "未知命令：$command" ;;
   esac
   require_root
