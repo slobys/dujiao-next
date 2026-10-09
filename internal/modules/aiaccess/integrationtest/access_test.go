@@ -116,7 +116,7 @@ func TestScopeValidationAndExpiry(t *testing.T) {
 			t.Fatal("invalid expiry allowed")
 		}
 	}
-	for _, name := range []string{"", "    ", "x\ninjected", strings.Repeat("中", 60)} {
+	for _, name := range []string{"", "    ", "x\ninjected", "Open\u202eClaw", "Open\u2066Claw", "Open\u200bClaw", "Open\u2028Claw", "Open\u2029Claw", "Open\xffClaw", strings.Repeat("中", 60)} {
 		if _, _, err := svc.Create(ctx, name, []string{application.ScopeCatalog}, 30, 1); err == nil {
 			t.Fatalf("invalid name allowed: %q", name)
 		}

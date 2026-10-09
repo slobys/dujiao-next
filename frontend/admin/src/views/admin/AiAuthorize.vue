@@ -19,7 +19,7 @@ type Request = {
 const text = {
   'zh-CN': {
     title: '授权 AI 连接商城', subtitle: '请确认连接的 AI 工具和权限。批准后它只能访问勾选的数据，不会获得管理员登录权限。',
-    client: '请求连接的应用', redirect: '连接后将返回', perms: '选择授予的 AI 权限',
+    client: '请求连接的应用', clientUnverified: '应用名称由连接方自行填写，未经商城验证。请确认连接由你主动发起，并核对下方的回调地址。', redirect: '连接后将返回', perms: '选择授予的 AI 权限',
     catalog: '查看商品与分类', inventory: '查看库存预警', report: '查看营业汇总',
     draftWrite: '自动创建默认下架的商品草稿（无需每次审批）', publishRequest: '申请商品上架/下架（每次必须人工批准）',
     ordersRead: '读取脱敏订单状态、金额和时间（不含客户信息/卡密）', ordersReview: '提交订单售后审核工单（不直接退款/发货/取消）',
@@ -33,7 +33,7 @@ const text = {
   },
   'zh-TW': {
     title: '授權 AI 連接商城', subtitle: '請確認 AI 工具及權限。批准後僅可讀取勾選資料，不會取得管理員登入權限。',
-    client: '請求連接的應用', redirect: '連接後返回', perms: '選擇授予 AI 的權限',
+    client: '請求連接的應用', clientUnverified: '應用名稱由連接方自行填寫，未經商城驗證。請確認連接由你主動發起，並核對下方回呼網址。', redirect: '連接後返回', perms: '選擇授予 AI 的權限',
     catalog: '查看商品與分類', inventory: '查看庫存警示', report: '查看營業摘要',
     draftWrite: '自動建立未上架商品草稿', publishRequest: '申請上架/下架（每次需人工批准）',
     ordersRead: '讀取去識別化訂單狀態與金額', ordersReview: '提交售後人工跟進工單（不直接退款/出貨）',
@@ -47,7 +47,7 @@ const text = {
   },
   'en-US': {
     title: 'Authorize an AI connection', subtitle: 'Review the client and its permissions. It will not receive an admin JWT or your admin password.',
-    client: 'Client requesting access', redirect: 'Return address', perms: 'Grant AI capabilities',
+    client: 'Client requesting access', clientUnverified: 'The client supplies its own display name; this store has not verified its identity. Confirm you initiated the connection and check the callback URL below.', redirect: 'Return address', perms: 'Grant AI capabilities',
     catalog: 'Products and categories', inventory: 'Inventory alerts', report: 'Sales summary',
     draftWrite: 'Create unpublished product drafts automatically', publishRequest: 'Request product publish/unpublish (always requires human approval)',
     ordersRead: 'Read sanitized order status and amounts (no customer/private delivery data)', ordersReview: 'Submit after-sales triage tickets (no automatic refund/delivery/cancel)',
@@ -140,7 +140,8 @@ onMounted(fetchRequest)
         <template v-if="details && !complete">
           <section class="rounded-lg border p-4">
             <h3 class="text-sm font-medium">{{ l.client }}</h3>
-            <p class="mt-1 text-lg font-semibold">{{ details.client_name }}</p>
+            <p class="mt-1 text-lg font-semibold break-words"><bdi dir="auto">{{ details.client_name }}</bdi></p>
+            <p class="mt-1 text-xs text-amber-700 dark:text-amber-300" role="note">{{ l.clientUnverified }}</p>
             <p class="font-mono text-xs text-muted-foreground">{{ details.client_id }}</p>
             <h3 class="mt-3 text-sm font-medium">{{ l.redirect }}</h3>
             <p class="mt-1 break-all font-mono text-xs">{{ details.redirect_uri }}</p>

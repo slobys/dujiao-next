@@ -71,6 +71,35 @@ func TestRemoteDisabledByDefaultAndStrictOrigin(t *testing.T) {
 		t.Fatal("disabled remote allowed")
 	}
 }
+
+// Dynamic client registration is unauthenticated; client names on the
+// OAuth consent screen must not contain invisible or bidi display controls.
+func TestOAuthClientRegistrationRejectsDisplayControlNames(t *testing.T) {
+	db, _, remote := remoteFixture(t)
+	ctx := context.Background()
+	redirects := []string{"http://127.0.0.1:5000/callback"}
+	for _, name := range []string{
+		"Open\u202eClaw", // right-to-left override
+		"Open\u2066Claw", // directional isolate
+		"Open\u200bClaw", // invisible zero-width space
+		"Open\u200fClaw", // right-to-left mark
+		"Open\u2028Claw", // line separator
+		"Open\u2029Claw", // paragraph separator
+		"Open\xffClaw",   // malformed UTF-8
+	} {
+		if _, err := remote.RegisterClient(ctx, name, redirects); !errors.Is(err, app.ErrInvalid) {
+			t.Fatalf("registration accepted spoofable client label %q: %v", name, err)
+		}
+	}
+	var count int64
+	if err := db.Model(&domain.OAuthClient{}).Count(&count).Error; err != nil || count != 0 {
+		t.Fatalf("invalid client names persisted: count=%d err=%v", count, err)
+	}
+	if _, err := remote.RegisterClient(ctx, "OpenClaw 中文", redirects); err != nil {
+		t.Fatalf("ordinary Unicode name rejected: %v", err)
+	}
+}
+
 func TestOAuthBrowserPKCELifecycleAndRefresh(t *testing.T) {
 	_, keys, remote := remoteFixture(t)
 	ctx := context.Background()

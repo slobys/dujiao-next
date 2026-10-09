@@ -49,12 +49,15 @@ type Service struct {
 func New(repo contract.Repository) *Service { return &Service{repo: repo, now: time.Now} }
 func (s *Service) Now() time.Time           { return s.now().UTC() }
 
+// Credential and self-registered OAuth client names appear in security-sensitive
+// admin dialogs. Reject invisible and bidirectional formatting that could spoof
+// trusted client names or conceal part of the displayed label.
 func validCredentialName(name string) bool {
-	if len(name) < 1 || len(name) > 100 || utf8.RuneCountInString(name) > 100 {
+	if len(name) < 1 || len(name) > 100 || !utf8.ValidString(name) || utf8.RuneCountInString(name) > 100 {
 		return false
 	}
 	for _, r := range name {
-		if unicode.IsControl(r) {
+		if unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) {
 			return false
 		}
 	}
