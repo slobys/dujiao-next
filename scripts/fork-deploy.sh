@@ -1351,7 +1351,6 @@ menu_command_for() {
     9) printf 'configure-https' ;;
     10) printf 'https-status' ;;
     11) printf 'access' ;;
-    12) printf 'configure-ip' ;;
     0|q|Q) printf 'exit' ;;
     *) return 1 ;;
   esac
@@ -1375,14 +1374,13 @@ run_menu() {
   9) 申请 HTTPS 证书：选择域名 / 公网 IPv4（自动续期）
  10) 查看 HTTPS 证书与访问状态
  11) 显示可复制的商城和后台访问链接
- 12) 直接为公网 IPv4 申请短期 HTTPS 证书
   0) 退出
 ===========================================
 MENU
     printf '请输入编号: ' >/dev/tty
     IFS= read -r choice </dev/tty || return 0
     if ! action=$(menu_command_for "$choice"); then
-      info "无效的菜单编号：请使用 0-12。"
+      info "无效的菜单编号：请使用 0-11。"
       continue
     fi
     [[ "$action" != "exit" ]] || return 0

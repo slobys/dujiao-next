@@ -284,8 +284,8 @@ else
 fi
 check "existing flock made no APT calls" test ! -e "$TEST_TMP/flock-existing-apt"
 
-menu_expected=(install status logs backup update restart help configure-network configure-https https-status access configure-ip exit)
-menu_codes=(1 2 3 4 5 6 7 8 9 10 11 12 0)
+menu_expected=(install status logs backup update restart help configure-network configure-https https-status access exit)
+menu_codes=(1 2 3 4 5 6 7 8 9 10 11 0)
 for i in "${!menu_codes[@]}"; do
   actual=$(menu_command_for "${menu_codes[$i]}")
   if [[ "$actual" == "${menu_expected[$i]}" ]]; then
@@ -294,7 +294,7 @@ for i in "${!menu_codes[@]}"; do
     fail "menu choice ${menu_codes[$i]} resolves to ${menu_expected[$i]}"
   fi
 done
-if menu_command_for 13 >/dev/null; then
+if menu_command_for 12 >/dev/null; then
   fail "menu rejects unknown choices"
 else
   pass "menu rejects unknown choices"

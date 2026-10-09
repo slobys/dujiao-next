@@ -103,7 +103,7 @@ sudo env DUJIAO_DOMAIN=shop.example.com DUJIAO_ACME_EMAIL=admin@example.com \
 
 ```bash
 sudo env DUJIAO_IP=你的实际公网IPv4 dujiao-fork configure-ip
-# 或菜单 12 直接申请公网 IP 证书
+# 也可以使用菜单 9 → 2) 公网 IPv4 证书
 ```
 
 IP 模式显式使用 Let's Encrypt **`shortlived`** 证书（有效期 **160 小时**，约 6.7 天），并固定支持该 ACME Profile 的 **Caddy 2.11.7**；不会使用 Caddy 默认的本地自签 IP 证书。**两种模式都是 Caddy 内置自动续期，不需要 Cron**。Caddy 设置 `restart: unless-stopped`，证书及 ACME 账户持久化在 `data/caddy/data/`，配置保存在 `data/caddy/config/`。自动续期仍依赖公网 IPv4 不变、Caddy 持续运行、TCP 80/443 可达、CA 和网络正常；更换公网 IP 后必须重新申请并更新 MCP 客户端的地址。
