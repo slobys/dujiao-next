@@ -102,13 +102,31 @@ func (s *Store) RevokeWithAudit(ctx context.Context, id uint, now time.Time, aud
 	updated := false
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		result := tx.Model(&domain.Key{}).
-			Where("id = ? AND revoked_at IS NULL", id).
+			Where("id = ? AND key_id = ? AND revoked_at IS NULL", id, audit.KeyID).
 			Updates(map[string]interface{}{"revoked_at": now, "updated_at": now})
 		if result.Error != nil {
 			return result.Error
 		}
 		if result.RowsAffected != 1 {
 			return nil
+		}
+		if err := tx.Model(&domain.ActionRequest{}).
+			Where("key_id = ? AND status = ?", audit.KeyID, domain.ActionPending).
+			Updates(map[string]interface{}{"status": domain.ActionRejected, "failure_code": "key_revoked", "updated_at": now}).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&domain.OrderReview{}).Where("key_id = ? AND status = ?", audit.KeyID, domain.OrderReviewPending).Updates(map[string]any{"status": domain.OrderReviewRejected, "updated_at": now}).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&domain.OrderCancellation{}).
+			Where("key_id = ? AND status = ?", audit.KeyID, domain.ActionPending).
+			Updates(map[string]any{"status": domain.ActionRejected, "failure_code": "key_revoked", "updated_at": now}).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&domain.WalletRefundRequest{}).
+			Where("key_id = ? AND status = ?", audit.KeyID, domain.ActionPending).
+			Updates(map[string]any{"status": domain.ActionRejected, "failure_code": "key_revoked", "updated_at": now}).Error; err != nil {
+			return err
 		}
 		if err := tx.Create(audit).Error; err != nil {
 			return err

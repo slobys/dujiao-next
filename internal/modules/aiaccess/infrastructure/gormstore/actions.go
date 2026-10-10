@@ -10,8 +10,18 @@ import (
 	"gorm.io/gorm"
 )
 
-func (s *Store) CreateAction(ctx context.Context, action *domain.ActionRequest, audit *domain.Audit) error {
+func (s *Store) CreateAction(ctx context.Context, action *domain.ActionRequest, audit *domain.Audit, expectedTokenHash string) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Recheck the exact credential when persisting an AI proposal: an
+		// already-authenticated request may have been rotated or revoked.
+		var key domain.Key
+		if err := tx.Where("key_id = ? AND token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+			action.KeyID, expectedTokenHash, time.Now().UTC()).First(&key).Error; err != nil {
+			return err
+		}
+		if !validScope(key.Scopes, "catalog:publish:request") {
+			return gorm.ErrRecordNotFound
+		}
 		if err := tx.Create(action).Error; err != nil {
 			return err
 		}

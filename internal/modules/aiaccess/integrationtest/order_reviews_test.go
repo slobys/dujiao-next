@@ -138,21 +138,34 @@ func TestOrderReviewRevocationExpiryAndRejection(t *testing.T) {
 	if _, err = review.Process(ctx, another.ID, 8, "accept"); !errors.Is(err, app.ErrOrderReviewUnavailable) {
 		t.Fatal("revoked AI account accepted")
 	}
-	if status, err := review.Process(ctx, another.ID, 8, "reject"); err != nil || status != domain.OrderReviewRejected {
-		t.Fatalf("could not reject %s %v", status, err)
+	if state, err := review.GetForAdmin(ctx, another.ID); err != nil || state.Status != domain.OrderReviewRejected {
+		t.Fatalf("revocation did not reject pending review: %+v %v", state, err)
 	}
 	if _, err = review.Process(ctx, another.ID, 8, "resolve"); !errors.Is(err, app.ErrOrderReviewUnavailable) {
 		t.Fatal("rejected item resolved")
 	}
 }
-func TestRotationCancelsPendingOrderReview(t *testing.T){
- _,keys,review:=reviewFixture(t);ctx:=context.Background()
- key,_,err:=keys.Create(ctx,"Old Agent",[]string{app.ScopeOrderReviewRequest},2,1);if err!=nil{t.Fatal(err)}
- item,err:=review.Submit(ctx,key,exampleOrder(),"refund_review");if err!=nil{t.Fatal(err)}
- if _,err=keys.Rotate(ctx,key.ID,1);err!=nil{t.Fatal(err)}
- state,err:=review.GetForAdmin(ctx,item.ID)
- if err!=nil||state.Status!=domain.OrderReviewRejected{t.Fatalf("rotated key still has pending review: %+v %v",state,err)}
- if _,err=review.Process(ctx,item.ID,2,"accept");!errors.Is(err,app.ErrOrderReviewUnavailable){t.Fatal("rotated request approved")}
+func TestRotationCancelsPendingOrderReview(t *testing.T) {
+	_, keys, review := reviewFixture(t)
+	ctx := context.Background()
+	key, _, err := keys.Create(ctx, "Old Agent", []string{app.ScopeOrderReviewRequest}, 2, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := review.Submit(ctx, key, exampleOrder(), "refund_review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = keys.Rotate(ctx, key.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+	state, err := review.GetForAdmin(ctx, item.ID)
+	if err != nil || state.Status != domain.OrderReviewRejected {
+		t.Fatalf("rotated key still has pending review: %+v %v", state, err)
+	}
+	if _, err = review.Process(ctx, item.ID, 2, "accept"); !errors.Is(err, app.ErrOrderReviewUnavailable) {
+		t.Fatal("rotated request approved")
+	}
 }
 
 func TestOrderReviewAuditFailureRollsBack(t *testing.T) {

@@ -67,7 +67,7 @@ func (s *OrderReviews) Submit(ctx context.Context, key *domain.Key, order OrderS
 		Status: domain.OrderReviewPending, CreatedAt: now, UpdatedAt: now, ExpiresAt: now.Add(OrderReviewTTL),
 	}
 	audit := &domain.Audit{KeyID: key.KeyID, Action: "order_review_request", Route: "mcp/order_review", Result: "pending", CreatedAt: now}
-	if err = s.repo.CreateOrderReview(ctx, review, audit); err != nil {
+	if err = s.repo.CreateOrderReview(ctx, review, audit, key.TokenHash); err != nil {
 		return nil, err
 	}
 	return review, nil

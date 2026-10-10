@@ -23,7 +23,7 @@ const dict={
   approve:'批准并取消',reject:'拒绝',open:'打开订单管理',
   confirm:'批准后将尝试取消真实订单。请核对订单编号与金额，系统会重新核对所有严格条件：',
   confirmReject:'确认拒绝此申请？',success:'申请已处理，请核对原订单',rejectedMsg:'申请已拒绝',
-  error:'操作失败或订单已变化。请查看原订单，禁止重复执行同一申请。',
+  error:'操作失败或订单已变化。请查看原订单，禁止重复执行同一申请。',revokedReason:'AI 凭证已撤销，取消申请自动作废',
   pending:'待批准',executing:'执行中（需要人工检查，不自动重试）',
   succeeded:'已取消',rejected:'已拒绝',conflict:'不符合严格安全条件',failed:'执行失败需核查',expired:'已过期',
  },
@@ -33,7 +33,7 @@ const dict={
   refresh:'重新整理',none:'暫無取消申請',order:'訂單',amount:'原金額',status:'狀態',submitted:'提交時間',expires:'到期時間',actions:'操作',
   approve:'批准並取消',reject:'拒絕',open:'開啟訂單管理',
   confirm:'確定嘗試取消真實訂單？請核對訂單與金額：',confirmReject:'確認拒絕？',
-  success:'已處理，請檢查訂單',rejectedMsg:'已拒絕',error:'操作失敗或條件變更，請人工核查，不可重複執行。',
+  success:'已處理，請檢查訂單',rejectedMsg:'已拒絕',error:'操作失敗或條件變更，請人工核查，不可重複執行。',revokedReason:'AI 憑證已撤銷，取消申請自動失效',
   pending:'待批准',executing:'執行中，需人工核查',succeeded:'已取消',
   rejected:'已拒絕',conflict:'不符合條件',failed:'執行失敗',expired:'已到期',
  },
@@ -44,7 +44,7 @@ const dict={
   approve:'Approve cancellation',reject:'Reject',open:'Open orders',
   confirm:'Approve cancellation of this REAL order after checking ID and amount:',confirmReject:'Reject this request?',
   success:'Action processed. Verify merchant order state.',rejectedMsg:'Rejected',
-  error:'Failed or changed order. Manually inspect history. Never retry this request.',
+  error:'Failed or changed order. Manually inspect history. Never retry this request.',revokedReason:'AI credential revoked; cancellation request rejected',
   pending:'Pending',executing:'Executing—manual reconciliation',
   succeeded:'Canceled',rejected:'Rejected',conflict:'Strict criteria failed',failed:'Failed; review',expired:'Expired',
  },
@@ -56,6 +56,7 @@ const busy=ref(false)
 const working=ref<string|null>(null)
 const pending=(v:Request)=>v.status==='pending'&&new Date(v.expires_at)>new Date()
 const state=(v:Request)=>v.status==='pending'&&!pending(v)?t.value.expired:t.value[v.status]
+const failureLabel=(code:string)=>code==='key_revoked'?t.value.revokedReason:code
 const timestamp=(v:string)=>new Date(v).toLocaleString()
 const load=async()=>{
  busy.value=true
@@ -108,7 +109,7 @@ onMounted(load)
        </td>
        <td class="p-3 tabular-nums">{{ v.expected_total }} {{ v.currency }}</td>
        <td class="p-3">{{ state(v) }}
-        <p v-if="v.failure_code" class="text-xs text-muted-foreground">{{ v.failure_code }}</p>
+        <p v-if="v.failure_code" class="text-xs text-muted-foreground">{{ failureLabel(v.failure_code) }}</p>
        </td>
        <td class="whitespace-nowrap p-3">{{ timestamp(v.created_at) }}</td>
        <td class="whitespace-nowrap p-3">{{ timestamp(v.expires_at) }}</td>

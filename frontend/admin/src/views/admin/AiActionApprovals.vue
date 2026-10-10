@@ -37,7 +37,7 @@ const words = {
     askApprove:'确认立即执行线上商品的上架/下架操作？',
     askReject:'确定拒绝此项 AI 请求？',
     approved:'操作完成，请核对结果', denied:'已拒绝 AI 请求',
-    failure:'操作失败或已过期。请刷新核查，不要重复执行。',
+    failure:'操作失败或已过期。请刷新核查，不要重复执行。', revokedReason:'关联 AI 凭证已撤销，申请自动作废',
   },
   'zh-TW': {
     title:'AI 操作審批中心', subtitle:'AI 可建立未上架草稿；正式上架或下架需管理員逐筆批准。',
@@ -47,7 +47,7 @@ const words = {
     expires:'到期時間', actions:'操作', pending:'等待批准', executing:'執行中（禁止重試）',
     succeeded:'成功', rejected:'已拒絕', conflict:'商品已變更', failed:'失敗，需人工處理', expired:'已過期',
     approve:'批准並執行', reject:'拒絕', askApprove:'確定立即改變線上商品上架狀態？', askReject:'確定拒絕？',
-    approved:'已執行，請確認', denied:'已拒絕', failure:'失敗或過期，請刷新檢查。',
+    approved:'已執行，請確認', denied:'已拒絕', failure:'失敗或過期，請刷新檢查。', revokedReason:'AI 憑證已撤銷，申請自動失效',
   },
   'en-US': {
     title:'AI Action Approvals', subtitle:'AI may create unpublished drafts; every publish/unpublish action requires explicit approval.',
@@ -58,7 +58,7 @@ const words = {
     pending:'Pending', executing:'Executing (manual reconciliation; never retry automatically)',
     succeeded:'Succeeded', rejected:'Rejected', conflict:'Product changed', failed:'Failed; manual review', expired:'Expired',
     approve:'Approve and execute', reject:'Reject', askApprove:'Immediately change the live product status?', askReject:'Reject this request?',
-    approved:'Action completed; verify result', denied:'Rejected', failure:'Failed or expired. Inspect status before any new action.',
+    approved:'Action completed; verify result', denied:'Rejected', failure:'Failed or expired. Inspect status before any new action.', revokedReason:'AI credential revoked; request automatically rejected',
   },
 } as const
 
@@ -71,6 +71,7 @@ const formatDate = (value: string) => new Date(value).toLocaleString()
 const isPending = (a:Action) => a.status === 'pending' && new Date(a.expires_at) > new Date()
 const actionLabel = (a:Action) => a.desired_active ? t.value.publish : t.value.unpublish
 const stateLabel = (a:Action) => a.status === 'pending' && !isPending(a) ? t.value.expired : t.value[a.status]
+const failureLabel = (code: string) => code === 'key_revoked' ? t.value.revokedReason : code
 const reload = async () => {
   busy.value = true
   try {
@@ -135,7 +136,7 @@ onMounted(reload)
               <td class="p-3 tabular-nums">{{ item.expected_price }}</td>
               <td class="p-3 font-mono text-xs">{{ item.key_id }}</td>
               <td class="p-3">{{ stateLabel(item) }}
-                <p v-if="item.failure_code" class="text-xs text-muted-foreground">{{ item.failure_code }}</p>
+                <p v-if="item.failure_code" class="text-xs text-muted-foreground">{{ failureLabel(item.failure_code) }}</p>
               </td>
               <td class="whitespace-nowrap p-3">{{ formatDate(item.created_at) }}</td>
               <td class="whitespace-nowrap p-3">{{ formatDate(item.expires_at) }}</td>

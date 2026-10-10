@@ -130,11 +130,8 @@ func TestExpiredAndRevokedRequestsCannotBeApproved(t *testing.T) {
 	if _, err = actions.Claim(ctx, other.ID, 2); !errors.Is(err, app.ErrActionNotAvailable) {
 		t.Fatal("revoked key's pending request approved")
 	}
-	if err = actions.Reject(ctx, other.ID, 2); err != nil {
-		t.Fatal(err)
-	}
-	if err = actions.Reject(ctx, other.ID, 2); err == nil {
-		t.Fatal("duplicate rejection")
+	if err = actions.Reject(ctx, other.ID, 2); !errors.Is(err, app.ErrActionNotAvailable) {
+		t.Fatalf("revoked key request should already be rejected: %v", err)
 	}
 }
 func TestRotatedAIKeyCancelsUnapprovedActions(t *testing.T) {

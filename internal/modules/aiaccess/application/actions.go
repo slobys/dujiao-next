@@ -74,7 +74,7 @@ func (s *Actions) SubmitStatus(ctx context.Context, key *domain.Key, input Produ
 		CreatedAt: now, UpdatedAt: now, ExpiresAt: now.Add(ActionReviewTTL),
 	}
 	audit := &domain.Audit{KeyID: key.KeyID, Action: "action_request", Route: "ai/product_status", Result: "pending", CreatedAt: now}
-	if err = s.repo.CreateAction(ctx, item, audit); err != nil {
+	if err = s.repo.CreateAction(ctx, item, audit, key.TokenHash); err != nil {
 		return nil, err
 	}
 	return item, nil

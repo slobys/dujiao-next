@@ -9,13 +9,14 @@ import (
 	"gorm.io/gorm"
 )
 
-func (s *Store) CreateOrderReview(ctx context.Context, item *domain.OrderReview, audit *domain.Audit) error {
+func (s *Store) CreateOrderReview(ctx context.Context, item *domain.OrderReview, audit *domain.Audit, expectedTokenHash string) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Atomic guard against revocation between MCP authentication and
-		// database submission: an invalid or rotated AI identity cannot
-		// leave a new pending after-sales ticket behind.
+		// Recheck the exact credential at persistence time so a stale
+		// authenticated snapshot cannot create requests after a completed
+		// credential revocation or rotation.
 		var key domain.Key
-		if err := tx.Where("key_id = ? AND revoked_at IS NULL AND expires_at > ?", item.KeyID, time.Now().UTC()).First(&key).Error; err != nil {
+		if err := tx.Where("key_id = ? AND token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+			item.KeyID, expectedTokenHash, time.Now().UTC()).First(&key).Error; err != nil {
 			return err
 		}
 		if !validScope(key.Scopes, "orders:review:request") {

@@ -137,8 +137,8 @@ func TestCancelAdminRevocationAndRemoteOffFailClosed(t *testing.T) {
 	if spy.calls != 0 {
 		t.Fatal("revoked proposal executed")
 	}
-	if got := serveCancel(h, "/admin/ai-access/order-cancellations/"+id+"/reject", true); got.Code != 200 {
-		t.Fatalf("could not reject orphan request: %d", got.Code)
+	if got := serveCancel(h, "/admin/ai-access/order-cancellations/"+id+"/reject", true); got.Code != 409 {
+		t.Fatalf("revoked request should already be rejected: %d", got.Code)
 	}
 	if got := serveCancel(h, path, true); got.Code != 409 {
 		t.Fatal("rejected proposal executed")
@@ -271,7 +271,7 @@ func TestWalletApprovalRefusesDisabledServiceOrRevokedAgent(t *testing.T) {
 	if fake.calls != 0 {
 		t.Fatal("revoked payout executed")
 	}
-	if got := serveRefund(h, "/admin/ai-access/wallet-refunds/"+id+"/reject", true); got.Code != 200 {
-		t.Fatalf("cannot reject revoked request %d", got.Code)
+	if got := serveRefund(h, "/admin/ai-access/wallet-refunds/"+id+"/reject", true); got.Code != 409 {
+		t.Fatalf("revoked refund proposal should already be rejected: %d", got.Code)
 	}
 }

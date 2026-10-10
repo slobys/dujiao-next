@@ -54,7 +54,7 @@ func actionHTTPFixture(t *testing.T) (*container.Container, *app.Actions, *domai
 	sqlDB, _ := db.DB()
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err = db.AutoMigrate(&domain.Key{}, &domain.Audit{}, &domain.OAuthRefresh{}, &domain.RemoteConfig{}, &domain.ActionRequest{}, &domain.OrderCancellation{}, &domain.WalletRefundRequest{}); err != nil {
+	if err = db.AutoMigrate(&domain.Key{}, &domain.Audit{}, &domain.OAuthRefresh{}, &domain.RemoteConfig{}, &domain.ActionRequest{}, &domain.OrderReview{}, &domain.OrderCancellation{}, &domain.WalletRefundRequest{}); err != nil {
 		t.Fatal(err)
 	}
 	store := gormstore.New(db)
@@ -170,8 +170,8 @@ func TestApprovalRequiresActiveKeyAndSupportsRejection(t *testing.T) {
 		t.Fatalf("revoked applicant executed: %d calls=%d", got.Code, writer.calls)
 	}
 	got = request(t, services, reader, writer, "/admin/ai-access/actions/"+req.ID+"/reject", true)
-	if got.Code != 200 {
-		t.Fatalf("rejection failed HTTP %d", got.Code)
+	if got.Code != 409 {
+		t.Fatalf("revoked pending request must already be rejected, HTTP %d", got.Code)
 	}
 	if got = request(t, services, reader, writer, "/admin/ai-access/actions/"+req.ID+"/reject", true); got.Code != 409 {
 		t.Fatal("rejected request reusable")

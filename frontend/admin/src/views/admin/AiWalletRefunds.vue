@@ -23,7 +23,7 @@ const localeText={
   approve:'批准钱包入账',reject:'拒绝',open:'打开订单管理',
   confirm:'确定要向用户钱包实际入账退款吗？原支付渠道不会收到退款。请核对订单号和金额：',
   confirmReject:'确定拒绝这项钱包退款申请？',success:'退款已执行，请核对钱包流水',denied:'退款申请已拒绝',
-  error:'申请失效、余额入账失败或订单已改变。请查看审批状态、钱包流水与原订单，不要重复执行。',
+  error:'申请失效、余额入账失败或订单已改变。请查看审批状态、钱包流水与原订单，不要重复执行。',revokedReason:'AI 凭证已撤销，待审批申请自动拒绝，未执行入账',
   pending:'等待人工批准',executing:'执行中（需要人工核查，不得自动重试）',
   succeeded:'钱包已入账',rejected:'已拒绝',conflict:'资格已变化，未入账',
   failed:'失败，需人工核查',expired:'已过期',
@@ -36,7 +36,7 @@ const localeText={
   approve:'批准錢包入帳',reject:'拒絕',open:'查看訂單',
   confirm:'確定增加會員錢包餘額？這不是原支付渠道退款。請核對：',
   confirmReject:'確定拒絕？',success:'已入帳，請查核交易記錄',denied:'已拒絕',
-  error:'請求失效或交易失敗。請查核帳戶流水，不可重試。',
+  error:'請求失效或交易失敗。請查核帳戶流水，不可重試。',revokedReason:'AI 憑證已撤銷，待批申請自動拒絕，未執行入帳',
   pending:'待批准',executing:'執行中，需人工查核',succeeded:'錢包已入帳',
   rejected:'已拒絕',conflict:'訂單已變更',failed:'失敗需查核',expired:'已過期',
   customer_request:'客戶要求',duplicate_purchase:'重複購買',undelivered:'未交付',other:'其他',
@@ -50,7 +50,7 @@ const localeText={
   approve:'Approve wallet credit',reject:'Reject',open:'Open merchant orders',
   confirm:'Credit REAL wallet funds to this customer? This does NOT refund the original payment provider. Verify order ID and amount:',
   confirmReject:'Reject this AI wallet credit proposal?',success:'Wallet credited—verify ledger',denied:'Request rejected',
-  error:'Order changed or action failed. Inspect wallet ledger and request status; NEVER retry an executing request.',
+  error:'Order changed or action failed. Inspect wallet ledger and request status; NEVER retry an executing request.',revokedReason:'AI credential revoked; pending request rejected without wallet credit',
   pending:'Pending approval',executing:'Executing—manual reconciliation required',
   succeeded:'Wallet credited',rejected:'Rejected',conflict:'No longer eligible; not credited',
   failed:'Failed—investigate',expired:'Expired',
@@ -64,6 +64,7 @@ const busy=ref(false)
 const working=ref<string|null>(null)
 const canApprove=(v:Request)=>v.status==='pending'&&new Date(v.expires_at)>new Date()
 const statusLabel=(v:Request)=>v.status==='pending'&&!canApprove(v)?t.value.expired:t.value[v.status]
+const failureLabel=(code:string)=>code==='key_revoked'?t.value.revokedReason:code
 const reasonLabel=(v:Request)=>t.value[v.reason as keyof typeof t.value]||v.reason
 const date=(v:string)=>new Date(v).toLocaleString()
 const fetchRows=async()=>{
@@ -124,7 +125,7 @@ onMounted(fetchRows)
        <td class="p-3">{{ reasonLabel(v) }}</td>
        <td class="p-3">
         {{ statusLabel(v) }}
-        <p v-if="v.failure_code" class="text-xs text-muted-foreground">{{ v.failure_code }}</p>
+        <p v-if="v.failure_code" class="text-xs text-muted-foreground">{{ failureLabel(v.failure_code) }}</p>
        </td>
        <td class="whitespace-nowrap p-3">{{ date(v.expires_at) }}</td>
        <td class="p-3">

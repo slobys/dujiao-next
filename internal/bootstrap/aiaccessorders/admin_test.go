@@ -160,8 +160,8 @@ func TestRejectRevokedTicketWithoutAnyOrderMutation(t *testing.T) {
 	if got := orderRequest(t, c, accept, http.MethodPost, true); got.Code != 409 {
 		t.Fatalf("revoked AI ticket accepted %d", got.Code)
 	}
-	if got := orderRequest(t, c, "/admin/ai-access/order-reviews/"+id+"/reject", http.MethodPost, true); got.Code != 200 {
-		t.Fatalf("could not close revoked ticket %d", got.Code)
+	if got := orderRequest(t, c, "/admin/ai-access/order-reviews/"+id+"/reject", http.MethodPost, true); got.Code != 409 {
+		t.Fatalf("revoked ticket should already be rejected %d", got.Code)
 	}
 	if order.order.Status != "paid" {
 		t.Fatal("ticket changed paid order")
