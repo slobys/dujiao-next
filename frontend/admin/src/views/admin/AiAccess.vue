@@ -41,13 +41,14 @@ const translations = {
     pausedNotice: '关闭后立即拒绝新的 AI 请求；已开始执行的操作可能完成，关闭不自动撤销已有变更。',
     commandsTitle: '复制对应工具的连接命令', commandHelp: '安装或登录过程中，会打开浏览器让你在商城后台确认授权；连接无需填写管理员密码或手动复制 Key。',
     commandCopy: '复制命令', endpoint: '远程 MCP 地址', securityHint: '请确认域名有可信 HTTPS 证书，且原 HTTP 管理端口没有直接暴露到公网。禁用后已有远程连接立即失效。',
+    oauthRefreshNotice: 'OAuth 刷新令牌只能使用一次。管理员轮换或撤销 AI 凭证后，旧连接无法继续刷新，客户端需重新通过浏览器授权。',
     warning: '推荐远程 MCP 浏览器 OAuth：可分别授权 AI 创建下架草稿、申请上架/下架（每次仍须人工批准），写入权限默认不勾选。下方手动 AI Key 仅用于旧版本地只读方案。支付、退款、服务器操作不开放。',
     name: '应用名称', example: '例如：NAS OpenClaw / Windows Codex',
     days: '有效期（天，1–90）', scopes: '允许的能力',
     catalog: '商品和分类只读', inventory: '库存预警只读', report: '营业报表只读',
     draftWrite: '创建下架草稿（自动执行）', publishRequest: '申请上架/下架（每次人工批准）',
     create: '创建凭证', createConfirm: '确认创建专用 AI Key？完整密钥仅显示一次。',
-    refresh: '刷新', rotate: '轮换', rotateConfirm: '旧密钥将立即失效。确定轮换吗？',
+    refresh: '刷新', rotate: '轮换', rotateConfirm: '旧访问与 OAuth 刷新令牌将失效，关联待审批申请会被拒绝；已执行的操作不会回滚。确定轮换吗？',
     revoke: '撤销', revokeConfirm: '立即撤销此凭证并拒绝其所有待审批申请？已执行的操作不会撤回，执行中的请求仍需人工核查。',
     id: '标识', scopeLabel: '权限', status: '状态', expire: '到期', used: '最后使用', action: '操作',
     empty: '暂无 AI 凭证', audit: '最近访问与变更审计', event: '事件', resource: '资源', result: '结果', time: '时间',
@@ -66,13 +67,14 @@ const translations = {
     websiteTitle: '網站內容編輯', websiteStart: '允許 AI 建立網站草稿', websiteStop: '暫停 AI 建立網站草稿', websiteInfo: '只建立未發布文章、公告與停用的首頁 Banner 草稿，不自動發布。', websiteConfirm: '允許擁有 site:content:write 的 AI 建立未發布草稿？', pausedNotice: '關閉後不允許新 AI 請求，執行中的操作可能完成，已有變更不會自動回復。',
     commandsTitle: '複製工具的連接指令', commandHelp: '工具會開啟瀏覽器，請在商城後台確認授權；無需在聊天中傳送管理員密碼。',
     commandCopy: '複製指令', endpoint: '遠端 MCP 網址', securityHint: '使用可信 HTTPS 證書並關閉直接公開的 HTTP 管理埠；關閉後遠端連接立即失效。',
+    oauthRefreshNotice: 'OAuth 更新權杖只能使用一次。管理員輪換或撤銷 AI 憑證後，舊連線無法繼續更新，客戶端必須重新透過瀏覽器授權。',
     warning: '推薦遠端 MCP 瀏覽器 OAuth：可授權 AI 建立未上架草稿和申請上架/下架（逐次人工批准），寫入預設關閉。下方手動 AI Key 僅供舊版本地唯讀方式。支付、退款和伺服器不開放。',
     name: '應用程式名稱', example: '例如：NAS OpenClaw / Windows Codex',
     days: '有效期（天，1–90）', scopes: '允許的能力',
     catalog: '商品與分類唯讀', inventory: '庫存警示唯讀', report: '營業報表唯讀',
     draftWrite: '建立未上架草稿（自動）', publishRequest: '申請上架/下架（逐次人工批准）',
     create: '建立憑證', createConfirm: '確定建立 AI Key？完整金鑰只顯示一次。',
-    refresh: '重新整理', rotate: '輪換', rotateConfirm: '舊金鑰將立即失效。確定輪換？',
+    refresh: '重新整理', rotate: '輪換', rotateConfirm: '舊存取權杖與 OAuth 更新權杖將失效，相關待批准申請會被拒絕；已執行操作不會回復。確定輪換？',
     revoke: '撤銷', revokeConfirm: '確定撤銷此憑證並拒絕尚未批准的所有 AI 申請？已執行的變更不會撤回，執行中的請求仍需人工核查。',
     id: '識別碼', scopeLabel: '權限', status: '狀態', expire: '到期日', used: '上次使用', action: '操作',
     empty: '暫無 AI 憑證', audit: '最近存取與變更稽核', event: '事件', resource: '資源', result: '結果', time: '時間',
@@ -91,13 +93,14 @@ const translations = {
     websiteTitle: 'Website Content Editing', websiteStart: 'Allow AI to create website drafts', websiteStop: 'Pause AI website editing', websiteInfo: 'AI can create unpublished blog/notice drafts and disabled banners, never publish automatically.', websiteConfirm: 'Allow AI agents granted site:content:write to create unpublished drafts?', pausedNotice: 'Pausing rejects new AI requests, but already-running operations may finish. Existing changes are not rolled back.',
     commandsTitle: 'Copy a connection command', commandHelp: 'The client opens a browser for admin login and explicit scope approval; write scopes start unchecked. Never paste credentials into AI chat.',
     commandCopy: 'Copy command', endpoint: 'Remote MCP URL', securityHint: 'Use trusted HTTPS and close any public plaintext admin port. Disabling immediately blocks remote connections.',
+    oauthRefreshNotice: 'OAuth refresh tokens are single-use. Rotating or revoking an AI credential prevents further refresh; clients must authorize again in the browser.',
     warning: 'Use remote MCP browser OAuth for optional unpublished-draft creation and human-approved publication requests. Write scopes start unchecked. The manual AI Key form below is only for legacy local read-only access. Payments, refunds and server operations remain blocked.',
     name: 'Application name', example: 'e.g. NAS OpenClaw / Windows Codex',
     days: 'Lifetime (days, 1–90)', scopes: 'Granted capabilities',
     catalog: 'Read products and categories', inventory: 'Read inventory alerts', report: 'Read sales summaries',
     draftWrite: 'Create unpublished drafts automatically', publishRequest: 'Request publish/unpublish (human approval)',
     create: 'Create credential', createConfirm: 'Create an AI Key? The full secret is displayed only once.',
-    refresh: 'Refresh', rotate: 'Rotate', rotateConfirm: 'The old secret will stop working immediately. Continue?',
+    refresh: 'Refresh', rotate: 'Rotate', rotateConfirm: 'Old access and OAuth refresh tokens will be invalidated and related pending requests rejected. Completed operations cannot be undone. Continue?',
     revoke: 'Revoke', revokeConfirm: 'Revoke this credential and reject all its pending AI requests? Completed changes are not undone; already-executing requests still need manual reconciliation.',
     id: 'Identifier', scopeLabel: 'Scopes', status: 'Status', expire: 'Expires', used: 'Last used', action: 'Actions',
     empty: 'No AI credentials yet', audit: 'Recent access and key lifecycle audit', event: 'Event', resource: 'Resource', result: 'Result', time: 'Time',
@@ -281,6 +284,7 @@ onBeforeUnmount(closeToken)
           <Input v-model="remote.public_origin" type="url" placeholder="https://shop.example.com" autocomplete="off" />
         </label>
         <p class="text-sm text-muted-foreground">{{ l.securityHint }}</p>
+        <p class="rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground">{{ l.oauthRefreshNotice }}</p>
         <Button :disabled="remoteBusy" @click="saveRemote">{{ l.remoteSave }}</Button>
         <template v-if="mcpURL">
           <div class="rounded-md border p-3">

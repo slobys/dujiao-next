@@ -101,7 +101,7 @@ func TestOAuthClientRegistrationRejectsDisplayControlNames(t *testing.T) {
 }
 
 func TestOAuthBrowserPKCELifecycleAndRefresh(t *testing.T) {
-	_, keys, remote := remoteFixture(t)
+	db, keys, remote := remoteFixture(t)
 	ctx := context.Background()
 	if _, err := remote.SetConfig(ctx, true, "https://shop.example.com"); err != nil {
 		t.Fatal(err)
@@ -191,6 +191,26 @@ func TestOAuthBrowserPKCELifecycleAndRefresh(t *testing.T) {
 	if _, err = keys.AuthenticateMCP(ctx, next.AccessToken, "https://shop.example.com/mcp"); err != nil {
 		t.Fatal(err)
 	}
+	// A forged refresh token must not mutate the active access secret or
+	// invalidate the valid refresh token, even if the key is otherwise valid.
+	var before domain.Key
+	if err := db.First(&before, key.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	forged := "djrf_" + key.KeyID + "_" + strings.Repeat("f", 64)
+	if _, err = remote.Refresh(ctx, client.ClientID, forged, "https://shop.example.com/mcp"); !errors.Is(err, app.ErrOAuthGrant) {
+		t.Fatalf("forged refresh must return invalid grant: %v", err)
+	}
+	var after domain.Key
+	if err := db.First(&after, key.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if before.TokenHash != after.TokenHash {
+		t.Fatal("forged refresh changed existing access token")
+	}
+	if _, err = keys.AuthenticateMCP(ctx, next.AccessToken, "https://shop.example.com/mcp"); err != nil {
+		t.Fatalf("forged refresh invalidated the active token: %v", err)
+	}
 	manualRotated, err := keys.Rotate(ctx, key.ID, 9)
 	if err != nil {
 		t.Fatal(err)
@@ -207,8 +227,8 @@ func TestOAuthBrowserPKCELifecycleAndRefresh(t *testing.T) {
 	if err = keys.Revoke(ctx, key.ID, 9); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = remote.Refresh(ctx, client.ClientID, next.RefreshToken, "https://shop.example.com/mcp"); err == nil {
-		t.Fatal("revoked credential refreshed")
+	if _, err = remote.Refresh(ctx, client.ClientID, next.RefreshToken, "https://shop.example.com/mcp"); !errors.Is(err, app.ErrOAuthGrant) {
+		t.Fatalf("revoked credential must return invalid_grant, got %v", err)
 	}
 	if _, err = keys.AuthenticateMCP(ctx, next.AccessToken, "https://shop.example.com/mcp"); err == nil {
 		t.Fatal("revoked OAuth credential accepted")

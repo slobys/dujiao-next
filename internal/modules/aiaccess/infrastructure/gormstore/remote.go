@@ -7,6 +7,7 @@ import (
 
 	"github.com/dujiao-next/internal/modules/aiaccess/domain"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func (s *Store) GetRemote(ctx context.Context) (*domain.RemoteConfig, error) {
@@ -147,9 +148,24 @@ func (s *Store) RedeemAuthorization(ctx context.Context, id, codeHash string, no
 	})
 	return redeemed && err == nil, err
 }
+
+// RefreshOAuth serializes with manual key rotation/revocation by locking the
+// key BEFORE touching its refresh row. Both administrator operations lock the
+// key first; the reverse order deadlocks on PostgreSQL under concurrent use.
 func (s *Store) RefreshOAuth(ctx context.Context, keyID, clientID, refreshHash, audience string, now time.Time, accessHash, newRefreshHash string, accessExpiry time.Time, audit *domain.Audit) (bool, error) {
 	rotated := false
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var key domain.Key
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Select("id").
+			Where("key_id = ? AND oauth_client_id = ? AND audience = ? AND revoked_at IS NULL", keyID, clientID, audience).
+			First(&key).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil // revoked/rotated or invalid key: OAuth invalid_grant
+		}
+		if err != nil {
+			return err
+		}
 		r := tx.Model(&domain.OAuthRefresh{}).
 			Where("key_id = ? AND client_id = ? AND audience = ? AND token_hash = ? AND expires_at > ?", keyID, clientID, audience, refreshHash, now).
 			Updates(map[string]any{"token_hash": newRefreshHash, "updated_at": now})
@@ -160,12 +176,13 @@ func (s *Store) RefreshOAuth(ctx context.Context, keyID, clientID, refreshHash, 
 			return nil
 		}
 		r = tx.Model(&domain.Key{}).
-			Where("key_id = ? AND oauth_client_id = ? AND audience = ? AND revoked_at IS NULL", keyID, clientID, audience).
+			Where("id = ? AND revoked_at IS NULL", key.ID).
 			Updates(map[string]any{"token_hash": accessHash, "expires_at": accessExpiry, "updated_at": now})
 		if r.Error != nil {
 			return r.Error
 		}
 		if r.RowsAffected != 1 {
+			// This guard must roll back the refresh-token rotation as well.
 			return gorm.ErrRecordNotFound
 		}
 		if err := tx.Create(audit).Error; err != nil {
