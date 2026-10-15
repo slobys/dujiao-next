@@ -128,6 +128,43 @@ jobs:
       - name: Build server
         run: go build ./cmd/server
 
+  # 独立、一次性的数据库：专门执行不会在普通 go test 环境触发的行锁竞态用例。
+  oauth-postgres:
+    name: Verify AI OAuth concurrency (PostgreSQL 16)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: aiaccess_ci
+          POSTGRES_PASSWORD: ci_ephemeral_only
+          POSTGRES_DB: aiaccess_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U aiaccess_ci -d aiaccess_ci"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test refresh vs rotation and single-use tokens
+        env:
+          TEST_POSTGRES_DSN: 'host=127.0.0.1 port=5432 user=aiaccess_ci password=ci_ephemeral_only dbname=aiaccess_ci sslmode=disable'
+          AIACCESS_TEST_POSTGRES_ISOLATED: '1'
+        run: go test ./internal/modules/aiaccess/integrationtest -run '^TestPostgresOAuth' -count=5 -timeout=3m
+
   # 发布配置只在打 tag 时才会被 GoReleaser 读取，普通 CI 覆盖不到。
   # 而配置解析失败是在构建开始前就中止的，等到 tag 那一刻才发现代价最高，
   # 所以这里用与 release.yml 完全相同的 distribution/version 提前验一次。
